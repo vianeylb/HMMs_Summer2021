@@ -248,27 +248,22 @@ norm.HMM.conditional2 <- function(xc, x, mod)
 norm.HMM.pseudo_residuals <- function(x, mod, type)
 {
   n <- length(x)
+  xord <- sort(x)
   if (type=="ordinary"){
-    cdists <- norm.HMM.conditional(xc=x, x, mod)
+    cdists <- norm.HMM.conditional(xc=xord, x, mod)
   }
   else if (type=="forecast"){
-    cdists <- norm.HMM.conditional2(xc=x, x, mod)
+    cdists <- norm.HMM.conditional2(xc=xord, x, mod)
   }
-  xord <- sort(x)
+  xdiff <- c(0, xord[2:n] - xord[1:n-1])
+  cdists2 <- xdiff*cdists
+  cdf <- apply(cdists2, 2, cumsum)
+  cdf <- cdf + matrix(rep(1-cdf[n,],n),nrow=n, byrow=TRUE)
   upr <- rep(NA, n)
   for (i in 1:n)
   {
-    xval <- x[i]
-    index <- which(xord==xval)
-    cdf <- rep(NA, n)
-    cdf[1] <- 0
-    for (j in 2:n)
-    {
-      index2 <- which(x==xord[j]) 
-      cdf[j] <- cdf[j-1] + cdists[index2,i]*(xord[j]-xord[j-1])
-    }
-    cdf <- cdf + 1-cdf[n]
-    upr[i] <- cdf[index]
+    index <- which(xord==x[i])
+    upr[i] <- cdf[index,i]
   }
   npsr <- qnorm(upr)
   return(data.frame(npsr, x))
