@@ -266,5 +266,5 @@ norm.HMM.pseudo_residuals <- function(x, mod, type)
     upr[i] <- cdf[index,i]
   }
   npsr <- qnorm(upr)
-  return(data.frame(npsr, x))
+  return(data.frame(npsr, x, index=c(1:n)))
 }
