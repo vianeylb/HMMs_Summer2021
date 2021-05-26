@@ -31,7 +31,7 @@ delta0 <- rep(1/m, m)
 pois.mle <- pois.HMM.mle(pois.sample$obs, m, lambda0, gamma0, delta0, stationary=TRUE)
 pois.mle
 #Decode states
-pois.decoding <- pois.HMM.viterbi(pois.sample$obs, mod)
+pois.decoding <- pois.HMM.viterbi(pois.sample$obs, pois.mle)
 count(pois.decoding$state-pois.sample$state)
 #Get marginal distribution
 nx <- max(pois.sample$obs)
@@ -102,8 +102,8 @@ delta0 <- rep(1/m, m)
 norm.mle <- norm.HMM.mle(norm.sample$obs, m, mu0, sigma0, gamma0, delta0, stationary=TRUE)
 norm.mle
 #Decode states
-norm.decoding <- norm.HMM.viterbi(norm.sample$obs, mod2)
-count(norm.decoding-norm.sample$state)
+norm.decoding <- norm.HMM.viterbi(norm.sample$obs, norm.mle)
+count(norm.decoding$states-norm.sample$state)
 #Get marginal distribution
 start <- min(norm.sample$obs)
 end <- max(norm.sample$obs)
@@ -116,7 +116,7 @@ ggplot()+
 norm.pr <- norm.HMM.pseudo_residuals(norm.sample$obs, norm.mle, "forecast") 
 #Index plot of pseudo-residuals
 ggplot(norm.pr)+
-  geom_point(aes(x=c(1:length(npsr)), y=npsr), size=0.5, colour="black")+
+  geom_point(aes(x=index), y=npsr), size=0.5, colour="black")+
   theme_minimal()
 #Histogram of pseudo-residuals
 ggplot(norm.pr, aes(npsr))+
@@ -129,6 +129,5 @@ ggplot(norm.pr, aes(sample=npsr))+
   stat_qq_line()+
   theme_minimal()
 #ACF of pseudo-residuals
-ggacf(norm.pr)+
+ggacf(norm.pr$npsr)+
   theme_minimal()
-
