@@ -1,20 +1,22 @@
-#A.1.1 (modified for normal)
-norm.HMM.pn2pw <- function(m, mu, sigma, gamma, delta=NULL, stationary=TRUE){
+#the contraints for the shape parameter alpha and the scale parameter theta of the gamma distribution 
+#are alpha, theta > 0 so we can use the same method as with lambda of the poisson distribution
+#A.1.1 (modified for gamma)
+gam.HMM.pn2pw <- function(m, alpha, theta, gamma,delta=NULL, stationary=TRUE){
   #' Transform natural parameters to working
   #'
-  #' This function is for normal distributions.
+  #' This function is for gamma distributions.
   #' 
   #' m = number of states,
-  #' mu = vector of means for each state dependent normal distribution
-  #' sigma = vector of standard deviations for each state dependent normal distribution
+  #' alpha = shape parameter(s)
+  #' theta = scale parameter(s)
   #' gamma = transition probability matrix
   #' delta = inital state distribution
   
-  tmu <- mu 
-  tsigma <- log(sigma)
+  talpha <- log(alpha) 
+  ttheta <- log(theta) 
   
   if(m==1) {
-    return(tmu, tsigma)}
+    return(talpha, ttheta)}
   
   foo <- log(gamma/diag(gamma)) 
   tgamma <- as.vector(foo[!diag(m)]) 
@@ -24,62 +26,61 @@ norm.HMM.pn2pw <- function(m, mu, sigma, gamma, delta=NULL, stationary=TRUE){
   else {
     tdelta <- log(delta[-1]/delta[1])} 
   
-  parvect <- c(tmu, tsigma, tgamma, tdelta) 
+  parvect <- c(talpha, ttheta, tgamma, tdelta) 
   return(parvect)
 }
 
 
-#A.1.2 (modified for normal)
-norm.HMM.pw2pn <- function(m, parvect, stationary=TRUE){
+#A.1.2 (modified for gamma)
+gam.HMM.pw2pn <- function(m, parvect, stationary=TRUE){
   #' Transform working parameters to natural
   #'
-  #' This function is for normal distributions.
+  #' This function is for gamma distributions.
   #' 
   #' m = number of states,
-  #' parvect = (working means, working sd, working trans prob matrix entries, working initial dist) 
+  #' parvect = (working shapes, working scales, working trans prob matrix entries, working initial dist) 
   
-  mu <- parvect[1:m]
-  sigma <- exp(parvect[(m+1):(2*m)]) 
+  alpha <- exp(parvect[1:m])
+  theta <- exp(parvect[(m+1):(2*m)])
   gamma <- diag(m) 
   
   if (m==1) {
-    return(list(mu=mu, sigma=sigma, gamma=gamma, delta=1))}
+    return(list(alpha=alpha, theta=theta, gamma=gamma, delta=1))}
   
   gamma[!gamma] <- exp(parvect[(2*m+1):(2*m*m)]) 
-  gamma <- gamma/apply(gamma, 1, sum) 
+  gamma <- gamma/apply(gamma ,1,sum) 
   
   if(stationary){
-    delta<-solve(t(diag(m)-gamma+1),rep(1,m))}
+    delta<-solve(t(diag(m)-gamma+1),rep(1,m))} 
   else {
     foo<-c(1,exp(parvect[(2*m*m+1):(2*m*m+m-1)])) 
     delta <-foo/sum(foo)}
   
-  return(list(mu=mu, sigma=sigma, gamma=gamma, delta=delta))
+  return(list(alpha=alpha, theta=theta, gamma=gamma, delta=delta))
 }
 
 
-
-#A.1.3 (modified for normal)
-norm.HMM.mllk <- function(parvect, x, m, stationary=TRUE ,...){
+#A.1.3 (modified for gamma)
+gam.HMM.mllk <- function(parvect, x, m, stationary=TRUE ,...){
   #' Compute -log-likelihood from working parameters
   #'
-  #' This function is for normal distributions.
+  #' This function is for gamma distributions.
   #' 
-  #' parvect = (working means, working sds, working trans prob matrix entries, working initial dist),
+  #' parvect = (working shapes, working scales, working trans prob matrix entries, working initial dist),
   #' x = observations,
   #' m = number of states,
   
-  if(m==1) {return(-sum(dnorm(x, parvect[1], exp(parvect[2]), log=TRUE)))} 
+  if(m==1) {return(-sum(dgamma(x, shape=exp(parvect[1]), scale=exp(parvect[2]), log=TRUE)))} 
   
   n       <- length(x) 
-  pn      <- norm.HMM.pw2pn(m,parvect ,stationary=stationary) 
-  foo     <- pn$delta*dnorm(x[1], pn$mu, pn$sigma) 
+  pn      <- gam.HMM.pw2pn(m,parvect ,stationary=stationary)
+  foo     <- pn$delta*dgamma(x[1], shape=pn$alpha, scale=pn$theta) 
   sumfoo  <- sum(foo) 
   lscale  <- log(sumfoo)
   foo     <- foo/sumfoo
   
   for (i in 2:n){
-    if (!is.na(x[i]))  {P <- dnorm(x[i], pn$mu, pn$sigma)}  
+    if (!is.na(x[i]))  {P <- dgamma(x[i], shape=pn$alpha, scale=pn$theta)}
     else {P <- rep(1,m)} 
     
     foo     <- foo %*% pn$gamma*P 
@@ -92,32 +93,32 @@ norm.HMM.mllk <- function(parvect, x, m, stationary=TRUE ,...){
 }
 
 
-#A.1.4 (modified for normal)
-norm.HMM.mle <- function(x, m, mu0, sigma0, gamma0, delta0=NULL, stationary=TRUE,...) {
+#A.1.4 (modified for gamma)
+gam.HMM.mle <- function(x,m,alpha0,theta0,gamma0,delta0=NULL,stationary=TRUE,...) {
   #' Compute Maximum Likelihood Estimate
   #'
-  #' This function is for normal distributions starting with natural parameters
+  #' This function is for poission distributions starting with natural parameters
   #' 
   #' x        = observations,
   #' m        = number of states,
-  #' mu0      = inital guess for natural means
-  #' sigma0   = initial guess for natural standard deviations
+  #' alpha0   = inital guess for natural shapes
+  #' theta0   = inital guess for natural scales
   #' gamma0   = initial guess for natural transition probability matrix
   #' delta0   = initial guess for initial state distribution
   
-  parvect0 <- norm.HMM.pn2pw(m, mu0, sigma0, gamma0, delta0, stationary=stationary)
-  mod <- nlm(norm.HMM.mllk, parvect0, x=x, m=m, stationary=stationary) 
+  parvect0 <- gam.HMM.pn2pw(m,alpha0, theta0, gamma0, delta0 , stationary=stationary)
+  mod <- nlm(gam.HMM.mllk ,parvect0 ,x=x,m=m, stationary=stationary) 
   
-  pn    <- norm.HMM.pw2pn(m=m, mod$estimate, stationary=TRUE) 
+  pn    <- gam.HMM.pw2pn(m=m, mod$estimate, stationary=TRUE) 
   mllk  <- mod$minimum 
-  np    <- length(parvect0) 
-  AIC   <- 2*(mllk+np) 
-  n     <- sum(!is.na(x)) 
-  BIC   <- 2*mllk+np*log(n) 
+  np    <- length(parvect0)
+  AIC   <- 2*(mllk+np)
+  n     <- sum(!is.na(x))
+  BIC   <- 2*mllk+np*log(n)
   
   list(m=m, 
-       mu=pn$mu, 
-       sigma=pn$sigma,
+       alpha=pn$alpha, 
+       theta=pn$theta, 
        gamma=pn$gamma, 
        delta=pn$delta, 
        code=mod$code, 
@@ -127,43 +128,43 @@ norm.HMM.mle <- function(x, m, mu0, sigma0, gamma0, delta0=NULL, stationary=TRUE
 }
 
 
-#A.1.5 (modified for normal)
-norm.HMM.generate_sample <- function(ns, mod){
+#A.1.5 (modified for gamma)
+gam.HMM.generate_sample <- function(ns, mod){
   #' Generate a sample realization of an HMM
   #'
-  #' This function is for normal distributions.
+  #' This function is for poission distributions.
   #' 
   #' ns = length of realization 
   #' mod = HMM
   
   mvect <- 1:mod$m 
-  state <- numeric(ns)
-  state[1]<- sample(mvect, 1, prob=mod$delta)
+  state <- numeric(ns) 
+  state[1]<- sample(mvect, 1, prob=mod$delta) 
   
   for (i in 2:ns) {
     state[i] <- sample(mvect, 1, prob=mod$gamma[state[i-1],])} 
   
-  x <- rnorm(ns, mean=mod$mu[state], sd=mod$sigma[state]) 
-  return(list(state = state, observ = x)) 
+  x <- rgamma(ns, shape=mod$alpha[state], scale=mod$theta[state])
+  return(list(state = state, observ = x)) #I changed this from return(x) to hold on to the underlying states
 }
 
 
-#A.1.6 (modified for normal)
-norm.HMM.viterbi <-function(x, mod){
+#A.1.6 (modified for gamma)
+gam.HMM.viterbi <-function(x, mod){
   #' Global decoding by the Viterbi algorithm
   #'
-  #' This function is for normal distributions.
+  #' This function is for poission distributions.
   #' 
   #' x = sequence of observations
   #' mod = HMM
   
   n       <- length(x) 
-  xi      <- matrix(0,n,mod$m)  
-  foo     <- mod$delta*dnorm(x[1], mod$mu, mod$sigma) 
+  xi      <- matrix(0,n,mod$m)
+  foo     <- mod$delta*dgamma(x[1], shape=mod$alpha, scale=mod$theta) 
   xi[1,]  <- foo/sum(foo) 
   
   for (i in 2:n){
-    foo<-apply(xi[i-1,]*mod$gamma ,2,max)*dnorm(x[i], mod$mu, mod$sigma)
+    foo<-apply(xi[i-1,]*mod$gamma ,2,max)*dgamma(x[i], shape=mod$alpha, scale=mod$theta)
     xi[i,] <- foo/sum(foo) 
   }
   iv<-numeric(n) 
@@ -177,17 +178,17 @@ norm.HMM.viterbi <-function(x, mod){
 
 
 #A.1.7 Computing log(forward probabilities)
-norm.HMM.lforward <-function(x,mod){
+gam.HMM.lforward <-function(x,mod){
   n           <- length(x) #number of observations
   lalpha      <- matrix(NA,mod$m,n) #mxn matrix
-  foo         <- mod$delta*dnorm(x[1],mod$mu, mod$sigma) #probability vector that observ1 came from each state
+  foo         <- mod$delta*dgamma(x[1], shape=mod$alpha, scale=mod$theta) #probability vector that observ1 came from each state
   sumfoo      <- sum(foo) #sum of prob vector
   lscale      <- log(sumfoo) #log of sum of prob vector
   foo         <- foo/sumfoo #divide entries of prop vector by log of sum
   lalpha[,1]  <- lscale+log(foo) #set first column of matrix
   
   for (i in 2:n){
-    foo         <- foo%*%mod$gamma*dnorm(x[i], mod$mu, mod$sigma) 
+    foo         <- foo%*%mod$gamma*dgamma(x[i], shape=mod$alpha, scale=mod$theta)
     sumfoo      <- sum(foo)
     lscale      <- lscale+log(sumfoo)
     foo         <- foo/sumfoo
@@ -198,7 +199,7 @@ norm.HMM.lforward <-function(x,mod){
 
 
 #A.1.8 Computing log(backward probabilities)
-norm.HMM.lbackward <-function(x,mod){
+gam.HMM.lbackward <-function(x,mod){
   n           <- length(x) #number of observations
   m           <- mod$m #number of states
   lbeta       <- matrix(NA,m,n) #mxn matrix
@@ -207,7 +208,7 @@ norm.HMM.lbackward <-function(x,mod){
   lscale      <- log(m)
   
   for (i in (n-1):1){
-    foo         <- mod$gamma%*%(dnorm(x[i+1], mod$mu, mod$sigma)*foo) 
+    foo         <- mod$gamma%*%(dgamma(x[i+1], shape=mod$alpha, scale=mod$theta)*foo) 
     lbeta[,i]   <- log(foo)+lscale
     sumfoo      <- sum(foo)
     foo         <- foo/sumfoo
@@ -218,7 +219,7 @@ norm.HMM.lbackward <-function(x,mod){
 
 
 #A.1.9 Conditional probabilities
-norm.HMM.conditional <- function(xc,x,mod){
+gam.HMM.conditional <- function(xc,x,mod){
   n     <- length(x)
   m     <- mod$m
   nxc   <- length(xc)
@@ -226,10 +227,10 @@ norm.HMM.conditional <- function(xc,x,mod){
   Px    <- matrix(NA,nrow=m,ncol=nxc)
   
   for (j in 1:nxc) {
-    Px[,j] <-dnorm(xc[j], mod$mu, mod$sigma)}
+    Px[,j] <-dgamma(xc[j], shape=mod$alpha, scale=mod$theta)}
   
-  la      <- norm.HMM.lforward(x,mod)
-  lb      <- norm.HMM.lbackward(x,mod)
+  la      <- gam.HMM.lforward(x,mod)
+  lb      <- gam.HMM.lbackward(x,mod)
   la      <- cbind(log(mod$delta),la) 
   lafact  <- apply(la,2,max) #get max of each column of la (max prob that observ arose from given state)
   lbfact  <- apply(lb,2,max)
@@ -244,11 +245,11 @@ norm.HMM.conditional <- function(xc,x,mod){
 
 
 #A.1.10 Pseudo-residuals
-norm.HMM.pseudo_residuals <- function(x,mod) {
+gam.HMM.pseudo_residuals <- function(x,mod) {
   n <- length(x)
   xc <- sort(x)
   width <- diff(xc)
-  cdists <- norm.HMM.conditional(xc,x,mod) 
+  cdists <- gam.HMM.conditional(xc,x,mod) 
   cdistno1 <- cdists[1:(n-1),]
   mult <- apply(cdistno1, 2, "*", width)
   mult <- rbind(mult, width[n-1]*cdists[n,])
@@ -266,4 +267,6 @@ norm.HMM.pseudo_residuals <- function(x,mod) {
   npr <- qnorm(df)
   return(npr)
 }
+
+
 

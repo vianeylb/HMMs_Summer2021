@@ -184,3 +184,93 @@ pois.HMM.viterbi <-function(x, mod){
 }
 
 
+#A.1.7 Computing log(forward probabilities)
+#this function gives a matrix of probabilities in logarithmic form rows=states, columns=observation
+#probability that 
+pois.HMM.lforward <-function(x,mod){
+  n           <- length(x) #number of observations
+  lalpha      <- matrix(NA,mod$m,n) #mxn matrix
+  foo         <- mod$delta*dpois(x[1],mod$lambda) #probability vector of observ1 given state dist
+  sumfoo      <- sum(foo) #sum of prob vector
+  lscale      <- log(sumfoo) #log of sum of prob vector
+  foo         <- foo/sumfoo #divide entries of prop vector by log of sum
+  lalpha[,1]  <- lscale+log(foo) #set first column of matrix
+  
+  for (i in 2:n){
+    foo         <- foo%*%mod$gamma*dpois(x[i],mod$lambda) #prob vector of observi given state dist and trans prob
+    sumfoo      <- sum(foo)
+    lscale      <- lscale+log(sumfoo)
+    foo         <- foo/sumfoo
+    lalpha[,i]  <- log(foo)+lscale
+  }
+  return(lalpha)
+}
+
+
+#A.1.8 Computing log(backward probabilities)
+pois.HMM.lbackward <-function(x,mod){
+  n           <- length(x) #number of observations
+  m           <- mod$m #number of states
+  lbeta       <- matrix(NA,m,n) #mxn matrix
+  lbeta[,n]   <- rep(0,m) #fill last column with zeros
+  foo         <- rep(1/m,m)
+  lscale      <- log(m)
+
+  for (i in (n-1):1){
+    foo         <- mod$gamma%*%(dpois(x[i+1],mod$lambda)*foo) 
+    lbeta[,i]   <- log(foo)+lscale
+    sumfoo      <- sum(foo)
+    foo         <- foo/sumfoo
+    lscale      <- lscale+log(sumfoo)
+  }
+  return(lbeta)
+}
+
+
+#A.1.9 Conditional probabilities
+pois.HMM.conditional <- function(xc,x,mod){
+  n     <- length(x)
+  m     <- mod$m
+  nxc   <- length(xc)
+  dxc   <- matrix(NA,nrow=nxc,ncol=n)
+  Px    <- matrix(NA,nrow=m,ncol=nxc)
+  
+  for (j in 1:nxc) {
+    Px[,j] <-dpois(xc[j],mod$lambda)}
+  
+  la      <- pois.HMM.lforward(x,mod)
+  lb      <- pois.HMM.lbackward(x,mod)
+  la      <- cbind(log(mod$delta),la) 
+  lafact  <- apply(la,2,max) #get max of each column of la (max prob that observ arose from given state)
+  lbfact  <- apply(lb,2,max)
+  
+  for (i in 1:n){
+    foo     <- (exp(la[,i]-lafact[i])%*%mod$gamma)*exp(lb[,i]-lbfact[i])
+    foo     <- foo/sum(foo)
+    dxc[,i] <- foo%*%Px
+  }
+  return(dxc)
+}
+
+
+#A.1.10 Pseudo-residuals
+pois.HMM.pseudo_residuals <- function(x,mod) {
+  n         <- length(x)
+  #matrix where rows->xc, columns->observation num
+  #entry i,j is prob that x[j]=xc[i] given x[1:j] and x[(j+1):n]
+  cdists    <- pois.HMM.conditional(xc=0:max(x),x,mod) 
+  #cumulatively sum the columns of cdists (ex: cumsum(c(1,2,3))=c(1,3,6))
+  #add a row of zeros to the top to account for x[1]=0
+  cumdists  <- rbind(rep(0,n),apply(cdists ,2,cumsum)) 
+  ulo <- uhi <- rep(NA,n) 
+    
+  for (i in 1:n){
+      ulo[i] <- cumdists[x[i]+1,i] #prob that observ[i]<x[i]
+      uhi[i] <- cumdists[x[i]+2,i] #prob that observ[i]<x[i+1]
+  }
+  umi   <- 0.5*(ulo+uhi) #get middle value
+  #get value from N(0,1) with corresponding percentile of ulo, umi, and uhi
+  npsr  <- qnorm(rbind(ulo,umi,uhi)) 
+  return(data.frame(lo=npsr[1,], mi=npsr[2,], hi=npsr[3,]))
+}
+
