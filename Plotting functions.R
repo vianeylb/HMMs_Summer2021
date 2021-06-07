@@ -37,22 +37,31 @@ timeseriesfit <- function(hmmdata,
 #function to plot time series of observations with true states and fit states (poisson and normal)
 #hmmdata has columns: "Time", "Observation", "State" (true state if known), "GuessState"
 #use fit and true lambda for poisson and fit and true mu for normal in place of fitparam truparam
-timeseries_states <- function(m, hmmdata, fitparam, truparam = NULL){
-  p <- ggplot(hmmdata, aes(x = Time, y = Observation)) +
+timeseries_states <- function(m, hmmdata, fitparam, truparam = NULL, CIup = NULL, CIlow=NULL){
+  p <- ggplot() +
+    theme_light() +
     ggtitle('Timeseries of Observations and Underlying States') +
     theme(plot.title = element_text(hjust = 0.5)) +
     labs(x = 'Time', y = 'Observation') +
-    geom_line()
+    geom_line(data=hmmdata, aes(x = Time, y = Observation)) 
+  
+  if (!is.null(CIup)){
+    for (i in 1:m){
+      df <- data.frame('x'= hmmdata$Time, 'ymin' = rep(CIlow[i], length(hmmdata$Time)),
+                       'ymax' = rep(CIup[i], length(hmmdata$Time)))
+      p <- p + geom_ribbon(data=df, aes(x = x, ymin= ymin, ymax=ymax), fill=(i+1), alpha=0.3)
+    }
+  }
   if (!is.null(truparam)){
-    p <- p + geom_hline(yintercept = truparam, color = 2:(m+1), alpha = 0.7, lwd = 0.4) + 
-      geom_point(aes(x = Time, y = truparam[State], colour = State)) +
+    p <- p + geom_hline(yintercept = truparam, color = 2:(m+1), alpha = 0.7, lwd = 0.4) +
+      geom_point(data=hmmdata, aes(x = Time, y = truparam[State], colour = State)) +
       labs(colour = "State") +
-      geom_hline(yintercept = fitparam, linetype = 2, alpha = 0.7, color = 2:(m+1), lwd = 0.4) + 
-      geom_point(aes(Time, y = fitparam[GuessState], colour = State)) +
+      geom_hline(yintercept = fitparam, linetype = 2, alpha = 0.7, color = 2:(m+1), lwd = 0.4) +
+      geom_point(data=hmmdata, aes(Time, y = fitparam[GuessState], colour = State)) +
       labs(colour = "State")}
   else {
-    p <- p + geom_hline(yintercept = fitparam, linetype = 2, alpha = 0.7, color = 2:(m+1), lwd = 0.4) + 
-      geom_point(aes(Time, y = fitparam[GuessState], colour = GuessState)) +
+    p <- p + geom_hline(yintercept = fitparam, linetype = 2, alpha = 0.7, color = 2:(m+1), lwd = 0.4) +
+      geom_point(data=hmmdata, aes(Time, y = fitparam[GuessState], colour = GuessState)) +
       labs(colour = "State")}
   return(p)
 }
@@ -60,168 +69,221 @@ timeseries_states <- function(m, hmmdata, fitparam, truparam = NULL){
 #example
 #timeseries_states(3, pois3sdatasm, modpois3s$lambda, pois3s$lambda)
 #timeseries_states(3, normdatahead, modnorm3s$mu, norm3s$mu)
-  
 
-pois_hist_dist <- function(m, hmmdata, mod,
-                              title = 'Histogram of HMM with State Distributions',
-                              xlabel = 'Observation', 
-                              ylabel = 'Frequency', 
-                              numbreaks=25){
+
+########################## POISSON ########################
+
+pois_hist_dist <- function(m, hmmdata, mod, width=1){
   observ = hmmdata$Observation
   state = hmmdata$State
-  h <- hist(observ, main=title, xlab=xlabel, ylab=ylabel, breaks=numbreaks)
+  
+  h <- ggplot() + 
+    geom_histogram(data=hmmdata, 
+                   aes(x=Observation), 
+                   binwidth = width,
+                   colour="cornsilk4",
+                   fill="white") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank())
   xfit <- seq(min(observ), max(observ))
-  colours = c('blue', 'red', 'green', 'darkgreen', 'gold', 'deeppink', 'purple', 'brown')
-  name = c('State 1', 'State 2', 'State 3', 'State 4', 'State 5', 'State 6', 'State 7', 'State 8')
   marginal <- numeric(length(xfit))
   
   for (i in 1:m) {
     yfit <- dpois(xfit, mod$lambda[i])
-    yfit <- yfit * sum(state==i) * diff(h$mids[1:2])
-    lines(xfit, yfit, lwd = 2, col=colours[i])
+    yfit <- yfit * sum(state==i) * width
+    df <- data.frame('xfit' = xfit, 'yfit' = yfit, col = as.factor(rep(i, length(xfit))))
+    h <- h + geom_line(data=df,aes(xfit, yfit, colour=col), lwd=0.7)
     marginal <- marginal + yfit
   }
-  legend("topright", name[1:m], col=colours[1:m], lwd=2)
-  lines(xfit, marginal, lwd = 2, col="black")
+  h <- h + labs(color = "State")
+  df <- data.frame('xfit' = xfit, 'yfit' = marginal)
+  h <- h + geom_line(data=df,aes(xfit, yfit), col="black", lwd=0.7)
+  
+  return(h)
 }
 
 
-
-
-#plot histogram of observations with overlayed fit distributions poisson
-pois_hist_fitdist <- function(m, hmmdata, mod,
-                           title = 'Histogram of HMM with Fitted State Distributions',
-                           xlabel = 'Observation', 
-                           ylabel = 'Frequency', 
-                           numbreaks=25){
+pois_hist_dist_CI <- function(m, hmmdata, mod, CI, width=1){
   observ = hmmdata$Observation
   fitstate = hmmdata$GuessState
-  h <- hist(observ, main=title, xlab=xlabel, ylab=ylabel, breaks=numbreaks)
+  
+  h <- ggplot() + 
+    geom_histogram(data=hmmdata, 
+                   aes(x=Observation), 
+                   binwidth = width,
+                   colour="cornsilk4",
+                   fill="white") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank())
   xfit <- seq(min(observ), max(observ))
-  colours = c('blue', 'red', 'green', 'darkgreen', 'gold', 'deeppink', 'purple', 'brown')
-  name = c('State 1', 'State 2', 'State 3', 'State 4', 'State 5', 'State 6', 'State 7', 'State 8')
   marginal <- numeric(length(xfit))
   
   for (i in 1:m) {
     yfit <- dpois(xfit, mod$lambda[i])
-    yfit <- yfit * sum(fitstate==i) * diff(h$mids[1:2])
-    lines(xfit, yfit, lwd = 2, col=colours[i])
+    yfit <- yfit * sum(fitstate==i) * width
+    df <- data.frame('xfit' = xfit, 'yfit' = yfit, col = as.factor(rep(i, length(xfit))))
+    h <- h + geom_line(data=df,aes(xfit, yfit, colour=col), lwd=0.7)
     marginal <- marginal + yfit
   }
-  legend("topright", name[1:m], col=colours[1:m], lwd=2)
-  lines(xfit, marginal, lwd = 2, col="black")
-}
+  h <- h + labs(color = "State")
+  df <- data.frame('xfit' = xfit, 'yfit' = marginal)
+  h <- h + geom_line(data=df,aes(xfit, yfit), col="black", lwd=0.7)
   
+  for (i in 1:m){
+    up <- dpois(xfit, CI$lambda.upper.conf[i])
+    up <- up * sum(fitstate==i) * width
+    down <- dpois(xfit, CI$lambda.lower.conf[i])
+    down <- down * sum(fitstate==i) * width
+    df <- data.frame('x' = xfit, 'upper' = up, 'lower' = down)
+    h <- h + geom_ribbon(data=df, aes(x = xfit, ymin= lower, ymax=upper), fill=(i+1), alpha=0.4)
+  }
+  return(h)
+}
 
-#example
-#pois_hist_dist(3, pois3sdata, modpois3s)
-#pois_hist_dist(2, pois3sdata, modpois2s)
 
+############################ NORMAL ######################
 
 #plot histogram of observations with overlayed fit distributions normal
-norm_hist_dist <- function(m, hmmdata, mod,
-                           title = 'Histogram of HMM with Fitted State Distributions',
-                           xlabel = 'Observation', 
-                           ylabel = 'Frequency', 
-                           numbreaks=25){
+norm_hist_dist <- function(m, hmmdata, mod, width=1){
   observ = hmmdata$Observation
   state = hmmdata$State
-  h <- hist(observ, main=title, xlab=xlabel, ylab=ylabel, breaks=numbreaks)
-  xfit <- seq(min(observ), max(observ), length.out = 100)
-  colours = c('blue', 'red', 'green', 'darkgreen', 'gold', 'deeppink', 'purple', 'brown')
-  name = c('State 1', 'State 2', 'State 3', 'State 4', 'State 5', 'State 6', 'State 7', 'State 8')
+  
+  h <- ggplot() + 
+    geom_histogram(data=hmmdata, 
+                   aes(x=Observation), 
+                   binwidth = width,
+                   colour="cornsilk4",
+                   fill="white") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank())
+  xfit <- seq(min(observ), max(observ))
   marginal <- numeric(length(xfit))
   
   for (i in 1:m) {
     yfit <- dnorm(xfit, mod$mu[i], mod$sigma[i])
-    yfit <- yfit * sum(state==i) * diff(h$mids[1:2])
-    lines(xfit, yfit, lwd = 2, col=colours[i])
+    yfit <- yfit * sum(state==i) * width
+    df <- data.frame('xfit' = xfit, 'yfit' = yfit, col = as.factor(rep(i, length(xfit))))
+    h <- h + geom_line(data=df,aes(xfit, yfit, colour=col), lwd=0.7)
     marginal <- marginal + yfit
   }
-  legend("topright", name[1:m], col=colours[1:m], lwd=2)
-  lines(xfit, marginal, lwd = 2, col="black")
+  h <- h + labs(color = "State")
+  df <- data.frame('xfit' = xfit, 'yfit' = marginal)
+  h <- h + geom_line(data=df,aes(xfit, yfit), col="black", lwd=0.7)
+  
+  return(h)
 }
 
 
-#plot histogram of observations with overlayed fit distributions normal
-norm_hist_fitdist <- function(m, hmmdata, mod,
-                           title = 'Histogram of HMM with Fitted State Distributions',
-                           xlabel = 'Observation', 
-                           ylabel = 'Frequency', 
-                           numbreaks=25){
+norm_hist_dist_CI <- function(m, hmmdata, mod, CI, width=1){
   observ = hmmdata$Observation
   fitstate = hmmdata$GuessState
-  h <- hist(observ, main=title, xlab=xlabel, ylab=ylabel, breaks=numbreaks)
-  xfit <- seq(min(observ), max(observ), length.out = 100)
-  colours = c('blue', 'red', 'green', 'darkgreen', 'gold', 'deeppink', 'purple', 'brown')
-  name = c('State 1', 'State 2', 'State 3', 'State 4', 'State 5', 'State 6', 'State 7', 'State 8')
+  
+  h <- ggplot() + 
+    geom_histogram(data=hmmdata, 
+                   aes(x=Observation), 
+                   binwidth = width,
+                   colour="cornsilk4",
+                   fill="white") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank())
+  xfit <- seq(min(observ), max(observ))
   marginal <- numeric(length(xfit))
   
   for (i in 1:m) {
     yfit <- dnorm(xfit, mod$mu[i], mod$sigma[i])
-    yfit <- yfit * sum(fitstate==i) * diff(h$mids[1:2])
-    lines(xfit, yfit, lwd = 2, col=colours[i])
+    yfit <- yfit * sum(fitstate==i) * width
+    df <- data.frame('xfit' = xfit, 'yfit' = yfit, col = as.factor(rep(i, length(xfit))))
+    h <- h + geom_line(data=df,aes(xfit, yfit, colour=col), lwd=0.7)
     marginal <- marginal + yfit
   }
-  legend("topright", name[1:m], col=colours[1:m], lwd=2)
-  lines(xfit, marginal, lwd = 2, col="black")
+  h <- h + labs(color = "State")
+  df <- data.frame('xfit' = xfit, 'yfit' = marginal)
+  h <- h + geom_line(data=df,aes(xfit, yfit), col="black", lwd=0.7)
+  
+  for (k in 1:m){
+    upper <- CI$upper[k,] * sum(fitstate==k)
+    lower <- CI$lower[k,] * sum(fitstate==k)
+    df <- data.frame('x' = CI$range, 'upper' = upper, 'lower' = lower)
+    h <- h + geom_ribbon(data=df, aes(x = x, ymin=lower, ymax=upper), fill=(k+1), alpha=0.4)
+  }
+  return(h)
 }
 
-
-#example
-#norm_hist_dist(3, normdata, modnorm3s)
-#norm_hist_dist(2, normdata, modnorm2s)
-
+###################### GAMMA ####################
 
 #plot histogram of observations with overlayed fit distributions gamma
-gam_hist_dist <- function(m, hmmdata, mod,
-                           title = 'Histogram of HMM with Fitted State Distributions',
-                           xlabel = 'Observation', 
-                           ylabel = 'Frequency', 
-                           numbreaks=40){
+gam_hist_dist <- function(m, hmmdata, mod, width=1){
   observ = hmmdata$Observation
   state = hmmdata$State
-  h <- hist(observ, main=title, xlab=xlabel, ylab=ylabel, breaks=numbreaks)
-  xfit <- seq(min(observ), max(observ), length.out = 100)
-  colours = c('blue', 'red', 'green', 'darkgreen', 'gold', 'deeppink', 'purple', 'brown')
-  name = c('State 1', 'State 2', 'State 3', 'State 4', 'State 5', 'State 6', 'State 7', 'State 8')
+  
+  h <- ggplot() + 
+    geom_histogram(data=hmmdata, 
+                   aes(x=Observation), 
+                   binwidth = width,
+                   colour="cornsilk4",
+                   fill="white") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank())
+  xfit <- seq(min(observ), max(observ))
   marginal <- numeric(length(xfit))
   
   for (i in 1:m) {
     yfit <- dgamma(xfit, shape=mod$alpha[i], scale=mod$theta[i])
-    yfit <- yfit * sum(state==i) * diff(h$mids[1:2])
-    lines(xfit, yfit, lwd = 2, col=colours[i])
+    yfit <- yfit * sum(state==i) * width
+    df <- data.frame('xfit' = xfit, 'yfit' = yfit, col = as.factor(rep(i, length(xfit))))
+    h <- h + geom_line(data=df,aes(xfit, yfit, colour=col), lwd=0.7)
     marginal <- marginal + yfit
   }
-  legend("topright", name[1:m], col=colours[1:m], lwd=2)
-  lines(xfit, marginal, lwd = 2, col="black")
+  h <- h + labs(color = "State")
+  df <- data.frame('xfit' = xfit, 'yfit' = marginal)
+  h <- h + geom_line(data=df,aes(xfit, yfit), col="black", lwd=0.7)
+  
+  return(h)
 }
 
 
-#plot histogram of observations with overlayed fit distributions gamma
-gam_hist_fitdist <- function(m, hmmdata, mod,
-                          title = 'Histogram of HMM with Fitted State Distributions',
-                          xlabel = 'Observation', 
-                          ylabel = 'Frequency', 
-                          numbreaks=40){
+gam_hist_dist_CI <- function(m, hmmdata, mod, CI, width=1){
   observ = hmmdata$Observation
   fitstate = hmmdata$GuessState
-  h <- hist(observ, main=title, xlab=xlabel, ylab=ylabel, breaks=numbreaks)
-  xfit <- seq(min(observ), max(observ), length.out = 100)
-  colours = c('blue', 'red', 'green', 'darkgreen', 'gold', 'deeppink', 'purple', 'brown')
-  name = c('State 1', 'State 2', 'State 3', 'State 4', 'State 5', 'State 6', 'State 7', 'State 8')
+  
+  h <- ggplot() + 
+    geom_histogram(data=hmmdata, 
+                   aes(x=Observation), 
+                   binwidth = width,
+                   colour="cornsilk4",
+                   fill="white") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank())
+  xfit <- seq(min(observ), max(observ))
   marginal <- numeric(length(xfit))
   
   for (i in 1:m) {
     yfit <- dgamma(xfit, shape=mod$alpha[i], scale=mod$theta[i])
-    yfit <- yfit * sum(fitstate==i) * diff(h$mids[1:2])
-    lines(xfit, yfit, lwd = 2, col=colours[i])
+    yfit <- yfit * sum(fitstate==i) * width
+    df <- data.frame('xfit' = xfit, 'yfit' = yfit, col = as.factor(rep(i, length(xfit))))
+    h <- h + geom_line(data=df,aes(xfit, yfit, colour=col), lwd=0.7)
     marginal <- marginal + yfit
   }
-  legend("topright", name[1:m], col=colours[1:m], lwd=2)
-  lines(xfit, marginal, lwd = 2, col="black")
+  h <- h + labs(color = "State")
+  df <- data.frame('xfit' = xfit, 'yfit' = marginal)
+  h <- h + geom_line(data=df,aes(xfit, yfit), col="black", lwd=0.7)
+  
+  for (k in 1:m){
+    upper <- CI$upper[k,] * sum(fitstate==k)
+    lower <- CI$lower[k,] * sum(fitstate==k)
+    df <- data.frame('x' = CI$range, 'upper' = upper, 'lower' = lower)
+    h <- h + geom_ribbon(data=df, aes(x = x, ymin=lower, ymax=upper), fill=(k+1), alpha=0.4)
+  }
+  return(h)
 }
 
+######################### PSEUDO RESIDUALS #####################
 
 #plot normal pseudo residuals
 pr.plot.discr <- function(data, labs=TRUE){
@@ -314,7 +376,3 @@ pr.acf <- function(pseudo, labs=TRUE){
   }
   return(p)
 }
-
-
-
-  
