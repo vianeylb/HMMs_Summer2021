@@ -1,0 +1,313 @@
+---
+title: "Fitting Gamma HMMs"
+author: "Simone"
+date: "24/05/2021"
+output:
+  pdf_document:
+    fig_caption: yes        
+    includes:  
+      in_header: myheader.tex
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(lme4)
+library(grid)
+library(gridExtra)
+library(dplyr)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Generate Data from a 3-State Gamma HMM
+
+```{r, include = FALSE}
+sys.source("Gamma HMM Functions.R",envir = knitr::knit_global())
+sys.source("Normal HMM Functions.R",envir = knitr::knit_global())
+sys.source("Plotting functions.R",envir = knitr::knit_global())
+```
+
+We have shapes $\boldsymbol{\alpha}$ and scales $\boldsymbol{\theta}$ for the state dependent gamma distributions. We have transition probability $\boldsymbol{\Gamma}$ and stationary distribution $\boldsymbol{\delta}$.
+\begin{align*}
+\boldsymbol{\alpha} = (2,\ 12,\ 8), \quad 
+\boldsymbol{\theta} = (2,\ 1,\ 3), \quad 
+\boldsymbol{\Gamma} = \begin{pmatrix}
+0.9 & 0.03 & 0.07 \\
+0.050 & 0.899 & 0.051 \\
+0.05 & 0.15 & 0.80 \\
+\end{pmatrix}, \quad
+\boldsymbol{\delta} = (0.3333333,\ 0.4382470,\ 0.2284197)
+\end{align*}
+
+```{r, echo = TRUE}
+T=10000
+gam3s <- list(m = 3,
+               alpha = c(2, 12, 8),
+               theta = c(2, 1, 3),
+               gamma = matrix(c(0.9, 0.03, 0.07,
+                                0.050, 0.899, 0.051,
+                                0.05, 0.15, 0.80), nrow=3, ncol=3, byrow = TRUE),
+               delta = c(0.3333333, 0.4382470, 0.2284197))
+sample <- gam.HMM.generate_sample(T, gam3s)
+gamdata = data.frame(Time = c(1:T), 
+                        Observation = sample$observ, 
+                        State = factor(sample$state))
+x <- gamdata$Observation
+```
+```{r, figures-side, fig.cap = "LEFT: Histogram of observations with state dependent gamma distributions overlayed. Black line is the marginal distribution. RIGHT: Timeseries of first 300 observations with colors corresponding hidden states", fig.show="hold", out.width="50%", echo=FALSE}
+gam_hist_dist(3, gamdata, gam3s)
+timeseries(head(gamdata, 300))
+```
+
+
+## Fit the Generated Data with a 3-State Gamma HMM
+
+To start, I summarize the data so that I can pick reasonable shapes and scales.
+```{r, echo = TRUE}
+summary = summary(x)
+mean = mean(x)
+Q1 = as.numeric(summary[2])
+Q2 = as.numeric(summary[5])
+m       <-3 
+alpha0 <- c(Q1, mean, Q2)
+theta0 <-c(1,1,1)
+gamma0  <-matrix(c(0.9 ,0.05 ,0.05,
+                   0.05 ,0.9 ,0.05,
+                   0.05 ,0.05 ,0.9),m,m,byrow=TRUE) 
+summary
+```
+
+I choose $\boldsymbol{\alpha}_0$ to be equidistant from the mean of the observations. I set $\boldsymbol{\theta}_0$ to 1 for all states. I choose $\boldsymbol{\Gamma}_0$ so that the diagonals 0.9 and the off-diagonals are 0.5 (common practice in book).
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+modgam3s <-gam.HMM.mle(x, m, alpha0, theta0, gamma0, stationary=TRUE)
+modgam3s
+```
+
+Find the standard error for each fitted paramter using the parametric bootstrap then compute the confidence intervals using the Monte Carlo method.
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+SEgam3 = gam.HMM.params_SE(x, 10, modgam3s, stationary = TRUE)
+minx = round(min(x))
+maxx = round(max(x))
+range = minx:maxx
+ci.plt <- gam.HMM.CI_MonteCarlo(range, m=3, n=500, SEgam3)
+```
+
+Now I find the underlying state sequence using global decoding by the Viterbi algorithm
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+state_seq <- gam.HMM.viterbi(x, modgam3s)
+gamdata3s <- gamdata
+gamdata3s$GuessState <- as.factor(state_seq)
+```
+
+```{r, fig.show="hold", out.width="50%", fig.cap = "LEFT: Histogram of observations with fitted state dependent gamma distributions overlayed. Black line is the marginal distribution. RIGHT: Timeseries of first 300 observations with colors corresponding fitted hidden states decoded by Viterbi algorithm.", echo= FALSE}
+gam_hist_dist_CI(m, gamdata3s, modgam3s, ci.plt, width=1)
+timeseriesfit(head(gamdata3s, 300))
+```
+
+```{r, echo = FALSE, fig.show="hold", fig.cap = "Timeseries of first 80 observations. The solid horizontal lines are the true means (alpha*theta) of each state dependent gamma distribution and the dashed lines are the fitted means. For each time interval there are two points, one falling on the true state mean line and one on the fitted state mean line. The colors of the points correspond to the true states of the observation at that time."}
+timeseries_states(3, head(gamdata3s, 80), modgam3s$alpha*modgam3s$theta, gam3s$alpha*gam3s$theta)
+```
+
+Now we can compute the normal pseudo-residuals
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE, fig.show="hold", fig.cap = "Plots for the normal pseudo-residuals of the fitted 3-state gamma HMM. TOP LEFT: Index plot of the normal pseudo residuals. TOP RIGHT: Histogram of the normal pseudo-residuals with N(0,1) overlayed. BOTTOM LEFT: Quantile–quantile plot of the normal pseudo-residuals. BOTTOM RIGHT: Autocorrelation function of the normal pseudo-residuals."}
+gamdata3s$PR <- gam.HMM.pseudo_residuals(x, modgam3s)
+gamdata3.pr <- filter(gamdata3s, PR != -Inf)
+gamdata3.pr <- filter(gamdata3.pr, PR != Inf)
+
+index3 <- pr.plot.cont(gamdata3.pr)
+hist3 <- pr.hist(gamdata3.pr)
+qq3 <- pr.qq(gamdata3.pr)
+acf3 <- pr.acf(gamdata3.pr$PR)
+grid.arrange(index3,hist3,qq3,acf3, ncol=2)
+```
+
+
+## Fit the Generated Data with a 2-State Gamma HMM
+
+Summarize the data so that I can pick reasonable shapes and scales.
+```{r, echo = TRUE}
+m       <- 2
+alpha0 <- c(Q1, Q2)
+theta0 <-c(1,1)
+gamma0  <-matrix(c(0.9 ,0.1,
+                   0.1 ,0.9),m,m,byrow=TRUE) 
+summary
+```
+I choose $\boldsymbol{\alpha}_0$ to be equidistant from the mean of the observations. I set $\boldsymbol{\theta}_0$ to 1 for all states. I choose $\boldsymbol{\Gamma}_0$ so that the diagonals 0.9 and the off-diagonals are 0.1.
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+modgam2s <-gam.HMM.mle(x, m, alpha0, theta0, gamma0, stationary=TRUE)
+modgam2s
+```
+Find the standard error for each fitted paramter using the parametric bootstrap then compute the confidence intervals using the Monte Carlo method.
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+SEgam2 = gam.HMM.params_SE(x, 10, modgam2s, stationary = TRUE)
+ci.plt <- gam.HMM.CI_MonteCarlo(range, m, n=500, SEgam2)
+```
+
+Now I find the underlying state sequence using global decoding by the Viterbi algorithm
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+state_seq <- gam.HMM.viterbi(x, modgam2s)
+gamdata2s <- gamdata
+gamdata2s$GuessState <- as.factor(state_seq)
+```
+
+```{r, fig.show="hold", out.width="50%", echo=FALSE, fig.cap = "LEFT: Histogram of observations with fitted state dependent gamma distributions overlayed. Black line is the marginal distribution. RIGHT: Timeseries of first 300 observations with colors corresponding fitted hidden states decoded by Viterbi algorithm."}
+gam_hist_dist_CI(m, gamdata2s, modgam2s, ci.plt, width=1)
+timeseriesfit(head(gamdata2s, 300))
+```
+
+```{r, echo = FALSE, fig.show="hold", fig.cap = "Timeseries of first 80 observations. The dashed lines are the fitted means (alpha*theta) for each state dependent gamma distribution. The colors of the points correspond to the fitted state of the observation at that time."}
+timeseries_states(2, tail(gamdata2s, 80), modgam2s$alpha*modgam2s$theta)
+```
+
+```{r, echo = TRUE, message=FALSE, warning=FALSE, fig.show="hold", fig.cap = "Plots for the normal pseudo-residuals of the fitted 2-state gamma HMM. TOP LEFT: Index plot of the normal pseudo residuals. TOP RIGHT: Histogram of the normal pseudo-residuals with N(0,1) overlayed. BOTTOM LEFT: Quantile–quantile plot of the normal pseudo-residuals. BOTTOM RIGHT: Autocorrelation function of the normal pseudo-residuals."}
+gamdata2s$PR <- gam.HMM.pseudo_residuals(x, modgam2s)
+gamdata2.pr <- filter(gamdata2s, PR != -Inf)
+gamdata2.pr <- filter(gamdata2.pr, PR != Inf)
+index2 <- pr.plot.cont(gamdata2.pr)
+hist2 <- pr.hist(gamdata2.pr)
+qq2 <- pr.qq(gamdata2.pr)
+acf2 <- pr.acf(gamdata2.pr$PR)
+grid.arrange(index2,hist2,qq2,acf2, ncol=2)
+```
+
+
+## Fit the Generated Data with a 4-State Normal HMM
+
+Summarize the data so that I can pick reasonable means and sds.
+```{r, echo = TRUE}
+min = as.numeric(summary[1])
+max = as.numeric(summary[6])
+diff = max-min
+d = diff/5
+
+m       <-4
+alpha0 <- c(3, 12, 20, 30)
+theta0 <- c(1,1,1,1)
+gamma0  <-matrix(c(0.91 ,0.03 ,0.03, 0.03,
+                   0.03 ,0.91 ,0.03, 0.03,
+                   0.03 ,0.03, 0.03 ,0.91),m,m,byrow=TRUE) 
+summary
+```
+I choose $\boldsymbol{\alpha}_0$ by looking at the histogram and inferring the means for four possible states. I set $\boldsymbol{\theta}_0$ to 1 for all states. I choose $\boldsymbol{\Gamma}_0$ so that the diagonals 0.91 and the off-diagonals are 0.03.
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+modgam4s <-gam.HMM.mle(x, m, alpha0, theta0, gamma0, stationary=TRUE)
+modgam4s
+```
+Find the standard error for each fitted paramter using the parametric bootstrap then compute the confidence intervals using the Monte Carlo method.
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+SEgam4 = gam.HMM.params_SE(x, 10, modgam4s, stationary = TRUE)
+ci.plt <- gam.HMM.CI_MonteCarlo(range, m, n=500, SEgam4)
+```
+
+Now I find the underlying state sequence using global decoding by the Viterbi algorithm
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+state_seq <- gam.HMM.viterbi(x, modgam4s)
+gamdata4s <- gamdata
+gamdata4s$GuessState <- as.factor(state_seq)
+```
+
+```{r, fig.show="hold", out.width="50%", echo=FALSE, fig.cap = "LEFT: Histogram of observations with fitted state dependent gamma distributions overlayed. Black line is the marginal distribution. RIGHT: Timeseries of first 300 observations with colors corresponding fitted hidden states decoded by Viterbi algorithm."}
+gam_hist_dist_CI(m, gamdata4s, modgam4s, ci.plt, width=1)
+timeseriesfit(head(gamdata4s, 300))
+```
+
+```{r, echo = FALSE, fig.show="hold", fig.cap = "Timeseries of first 80 observations. The dashed lines are the fitted means (alpha*theta) for each state dependent gamma distribution. The colors of the points correspond to the fitted state of the observation at that time."}
+timeseries_states(4, head(gamdata4s, 80), modgam4s$alpha * modgam4s$theta)
+```
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE, fig.show="hold", fig.cap = "Plots for the normal pseudo-residuals of the fitted 4-state gamma HMM. TOP LEFT: Index plot of the normal pseudo residuals. TOP RIGHT: Histogram of the normal pseudo-residuals with N(0,1) overlayed. BOTTOM LEFT: Quantile–quantile plot of the normal pseudo-residuals. BOTTOM RIGHT: Autocorrelation function of the normal pseudo-residuals."}
+gamdata4s$PR <- gam.HMM.pseudo_residuals(x, modgam4s)
+gamdata4.pr <- filter(gamdata4s, PR != -Inf)
+gamdata4.pr <- filter(gamdata4.pr, PR != Inf)
+index4 <- pr.plot.cont(gamdata4.pr)
+hist4 <- pr.hist(gamdata4.pr)
+qq4 <- pr.qq(gamdata4.pr)
+acf4 <- pr.acf(gamdata4.pr$PR)
+grid.arrange(index4,hist4,qq4,acf4, ncol=2)
+```
+
+
+## Fit the Generated Data with a 3-State Normal HMM
+
+To start, I summarize the data so that I can pick reasonable means and standard deviations.
+```{r, echo = FALSE}
+Q1 = as.numeric(summary[2])
+med = as.numeric(summary[3])
+Q3 = as.numeric(summary[5])
+min = as.numeric(summary[1])
+max = as.numeric(summary[6])
+sd = max(c((Q1-min)/3, (max-Q3)/3))
+
+m       <-3 
+mu0 <- c(Q1, med, Q3)
+sigma0 <-c(sd, sd, sd)
+gamma0  <-matrix(c(0.9 ,0.05 ,0.05,
+                   0.05 ,0.9 ,0.05,
+                   0.05 ,0.05 ,0.9),m,m,byrow=TRUE) 
+summary
+```
+I choose $\boldsymbol{\mu}_0$ according to the 1st quartile, median, and 3rd quartile. I set the standard deviation to the max difference between the 3rd quartile and the maximum and the 1st quartile and the minimum divided by 2. That is, all data should be within 3 sds of the chosen means. I choose $\boldsymbol{\Gamma}_0$ so that the diagonals 0.9 and the off-diagonals are 0.5 (common practice in book).
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+modnorm3s <-norm.HMM.mle(x, m, mu0, sigma0, gamma0, stationary=TRUE)
+modnorm3s
+```
+Confidence intervals
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+SEnorm3 <- norm.HMM.params_SE(x, n=20, modnorm3s, stationary=TRUE)
+SEnorm3
+minx = round(min(x))
+maxx = round(max(x))
+range = minx:maxx
+ci.plt <- norm.HMM.CI_MonteCarlo(range, m=3, n=500, SEnorm3)
+```
+
+Gloabl decoding of states
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+state_seq <- norm.HMM.viterbi(x, modnorm3s)
+normdata3s <- gamdata
+normdata3s$GuessState <- as.factor(state_seq)
+```
+
+```{r, fig.show="hold", out.width="50%", echo=FALSE, fig.cap = "LEFT: Histogram of observations with fitted state dependent gamma distributions overlayed. Black line is the marginal distribution. RIGHT: Timeseries of first 300 observations with colors corresponding fitted hidden states decoded by Viterbi algorithm."}
+norm_hist_dist_CI(m, normdata3s, modnorm3s, ci.plt, width=1)
+timeseriesfit(head(normdata3s, 300))
+```
+
+
+```{r, echo = FALSE, fig.show="hold", fig.cap = "Timeseries of first 80 observations. The solid horizontal lines are the true means (alpha*theta) of each state dependent gamma distribution and the dashed lines are the fitted means for the normal distributions (mu). For each time interval there are two points, one falling on the true state mean line and one on the fitted state mean line. The colors of the points correspond to the true states of the observation at that time."}
+timeseries_states(3, tail(normdata3s, 80), modnorm3s$mu, gam3s$alpha*gam3s$theta)
+```
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE, fig.show="hold", fig.cap = "Plots for the normal pseudo-residuals of the fitted 3-state normal HMM. TOP LEFT: Index plot of the normal pseudo residuals. TOP RIGHT: Histogram of the normal pseudo-residuals with N(0,1) overlayed. BOTTOM LEFT: Quantile–quantile plot of the normal pseudo-residuals. BOTTOM RIGHT: Autocorrelation function of the normal pseudo-residuals."}
+normdata3s$PR <- norm.HMM.pseudo_residuals(x, modnorm3s)
+normdata3.pr <- filter(normdata3s, PR != -Inf)
+normdata3.pr <- filter(normdata3.pr, PR != Inf)
+index3norm <- pr.plot.cont(normdata3.pr)
+hist3norm <- pr.hist(normdata3.pr)
+qq3norm <- pr.qq(normdata3.pr)
+acf3norm <- pr.acf(normdata3.pr$PR)
+grid.arrange(index3norm, hist3norm, qq3norm, acf3norm, ncol=2)
+```
+
+```{r, echo = FALSE, fig.show="hold", fig.cap= "Each row shows plots of the pseudo residuals for different fitted HMMs. The first row is for a 2-state HMM with gamma state dependent distributions. The second is a 3-State gamma distributed HMM and the third is a 4-state gamma distributed HMM. The last row has a 3-state HMM with normal state dependent distributions. The first column shows index plots of the normal pseudo-residuals. The second column shows the histograms of the normal pseudo-residuals with N(0,1) overlayed. The third column shows the quantile–quantile plots of the normal pseudo-residuals. The fourth column shows the autocorrelation functions of the normal pseudo-residuals", message=FALSE, warning=FALSE}
+grid.arrange(pr.plot.cont(gamdata2.pr, labs=FALSE),
+             pr.hist(gamdata2.pr, labs=FALSE),
+             pr.qq(gamdata2.pr, labs=FALSE),
+             pr.acf(gamdata2.pr$PR, labs=FALSE),
+             pr.plot.cont(gamdata3.pr, labs=FALSE),
+             pr.hist(gamdata3.pr, labs=FALSE),
+             pr.qq(gamdata3.pr, labs=FALSE),
+             pr.acf(gamdata3.pr$PR, labs=FALSE),
+             pr.plot.cont(gamdata4.pr, labs=FALSE),
+             pr.hist(gamdata4.pr, labs=FALSE),
+             pr.qq(gamdata4.pr, labs=FALSE),
+             pr.acf(gamdata4.pr$PR, labs=FALSE),
+             pr.plot.cont(normdata3.pr, labs=FALSE),
+             pr.hist(normdata3.pr, labs=FALSE),
+             pr.qq(normdata3.pr, labs=FALSE),
+             pr.acf(normdata3.pr$PR, labs=FALSE), ncol=4)
+```
+
+
+
