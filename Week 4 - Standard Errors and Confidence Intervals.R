@@ -3,8 +3,6 @@ library(ggplot2)
 library(ggfortify)
 library(plyr)
 
-setwd("C:/Jessica/UofT Y4/Research/Coding")
-
 source("Week 2 - Fitting HMM.R")
 source("Week 3 - Functions.R")
 
@@ -69,17 +67,17 @@ norm.jacobian <- function(m, parvect, stationary=TRUE){
 
 #Using bootstrapping
 norm.bootstrap.estimates <- function(mod, n, stationary){
-  mu_estimate <- numeric()
-  sigma_estimate <- numeric()
-  gamma_estimate <- numeric()
-  delta_estimate <- numeric()
+  mu_estimate <- numeric(n)
+  sigma_estimate <- numeric(n)
+  gamma_estimate <- numeric(n)
+  delta_estimate <- numeric(n)
   for (i in 1:n){
     sample <- norm.HMM.generate_sample(1000, mod)
     mod2 <- norm.HMM.mle(sample$obs, m, mod$mu, mod$sigma, mod$gamma, mod$delta, stationary=stationary)
-    mu_estimate <- c(mu_estimate, mod2$mu) 
-    sigma_estimate <- c(sigma_estimate, mod2$sigma) 
-    gamma_estimate <- c(gamma_estimate, mod2$gamma) 
-    delta_estimate <- c(delta_estimate, mod2$delta) 
+    mu_estimate[i] <- mod2$mu
+    sigma_estimate[i] <- mod2$sigma
+    gamma_estimate[i] <- mod2$gamma
+    delta_estimate[i] <- mod2$delta
   }
   return(list(mu=mu_estimate, sigma=sigma_estimate, gamma=gamma_estimate, delta=delta_estimate))
 }
