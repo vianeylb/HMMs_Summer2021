@@ -1,0 +1,244 @@
+---
+title: "Fitting Poisson HMMs"
+author: "Simone"
+date: "21/05/2021"
+output:
+  pdf_document:
+    fig_caption: yes        
+    includes:  
+      in_header: myheader.tex
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(lme4)
+library(grid)
+library(gridExtra)
+library(dplyr)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Generate Data from a 3-State Poisson HMM
+
+```{r, include = FALSE}
+sys.source("Poisson HMM Functions.R",envir = knitr::knit_global())
+sys.source("Plotting functions.R",envir = knitr::knit_global())
+```
+
+\begin{align*}
+\boldsymbol{\lambda} = (12,\ 19,\ 29), \quad 
+\boldsymbol{\Gamma} = \begin{pmatrix}
+0.955 & 0.024 &0.021 \\
+0.050 & 0.899 & 0.051 \\
+0.007 & 0.190 & 0.803 \\
+\end{pmatrix}, \quad
+\boldsymbol{\delta} = (0.4436,\ 0.4045,\ 0.1519)
+\end{align*}
+
+```{r, echo = TRUE}
+T=10000
+pois3s <- list(m = 3,
+               lambda = c(12, 19, 29),
+               gamma = matrix(c(0.955, 0.024, 0.021,
+                                0.050, 0.899, 0.051,
+                                0.007, 0.190, 0.803), nrow=3, ncol=3, byrow = TRUE),
+               delta = c(0.4583296, 0.3914683, 0.1502021))
+sample <- pois.HMM.generate_sample(T, pois3s)
+poisdata = data.frame(Time = c(1:T), 
+                      Observation = sample$observ, 
+                      State = factor(sample$state))
+x <- poisdata$Observation
+```
+```{r, figures-side, fig.show="hold", out.width="50%", echo=FALSE, fig.cap = "LEFT: Histogram of observations with state dependent poisson distributions overlayed. Black line is the marginal distribution. RIGHT: Timeseries of first 300 observations with colors corresponding hidden states"}
+pois_hist_dist(3, poisdata, pois3s)
+timeseries(head(poisdata, 300))
+```
+
+## Fit the Generated Data with a 3-State Poisson HMM
+
+To start, I summarize the data so that I can pick reasonable lambdas.
+```{r, echo = TRUE}
+summary = summary(x)
+Q1 = as.numeric(summary[2])
+med = as.numeric(summary[3])
+Q2 = as.numeric(summary[5])
+
+m       <-3 
+lambda0 <-c(Q1,med,Q2)
+gamma0  <-matrix(c(0.9 ,0.05 ,0.05,
+                   0.05 ,0.9 ,0.05,
+                   0.05 ,0.05 ,0.9),m,m,byrow=TRUE) 
+summary
+```
+I choose $\boldsymbol{\lambda}_0$ according to the 1st quartile, median, and 3rd quartile. I choose $\boldsymbol{\Gamma}_0$ so that the diagonals 0.9 and the off-diagonals are 0.05 (common practice in book).
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+modpois3s <-pois.HMM.mle(x, m, lambda0, gamma0, c(1/3,1/3,1/3), stationary=FALSE)
+modpois3s
+```
+Get confidence intervals for fitted parameters
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+CI3 = pois.HMM.CI(x, 20, modpois3s, stationary = TRUE)
+CI3
+```
+
+
+Now I find the underlying state sequence using global decoding by the Viterbi algorithm
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+state_seq <- pois.HMM.viterbi(x, modpois3s)
+poisdata3s <-poisdata
+poisdata3s$GuessState <- as.factor(state_seq)
+```
+
+```{r, fig.show="hold", out.width="50%", echo=FALSE, fig.cap = "LEFT: Histogram of observations with state dependent poisson distributions and their 95% confidence intervals overlayed. The black line is the marginal distribution. RIGHT: Timeseries of first 300 observations with colors corresponding fitted hidden states decoded by Viterbi algorithm."}
+pois_hist_dist_CI(3, poisdata3s, modpois3s, CI3)
+timeseriesfit(head(poisdata3s, 300))
+```
+
+```{r, echo = FALSE, fig.cap = "Timeseries of first 80 observations. The solid horizontal lines are the true means (lambda) of each state dependent poisson distribution and the dashed lines are the fitted means. For each time interval there are two points, one falling on the true state mean line and one on the fitted state mean line. The colors of the points correspond to the true states of the observation at that time. The 95% confidence intervals for the fitted lambdas are the shaded regions."}
+timeseries_states(3, head(poisdata3s, 80), modpois3s$lambda, pois3s$lambda, CI3$lambda.upper.conf, CI3$lambda.lower.conf)
+```
+
+```{r, echo = TRUE, message=FALSE, warning=FALSE, fig.cap = "Plots for the normal pseudo-residuals of the fitted 3-state poisson HMM. TOP LEFT: Index plot of the normal pseudo residuals. TOP RIGHT: Histogram of the normal pseudo-residuals with N(0,1) overlayed. BOTTOM LEFT: Quantile–quantile plot of the normal pseudo-residuals. BOTTOM RIGHT: Autocorrelation function of the normal pseudo-residuals."}
+
+pr <- pois.HMM.pseudo_residuals(x, modpois3s)
+
+poisdata3s$PR_lo <- pr$lo
+poisdata3s$PR <- pr$mi
+poisdata3s$PR_hi <- pr$hi
+
+index3 <- pr.plot.discr(poisdata3s)
+hist3 <- pr.hist(poisdata3s)
+qq3 <- pr.qq(poisdata3s)
+acf3 <- pr.acf(poisdata3s$PR)
+grid.arrange(index3,hist3,qq3,acf3, ncol=2)
+```
+
+## Fit the Generated Data with a 2-State Poisson HMM
+
+Summarize the data so that I can pick reasonable lambdas.
+```{r, echo = TRUE}
+Q1 = as.numeric(summary[2])
+Q2 = as.numeric(summary[5])
+
+m       <-2
+lambda0 <-c(Q1,Q2)
+gamma0  <-matrix(c(0.9 ,0.1,
+                   0.1 ,0.9),m,m,byrow=TRUE) 
+summary
+```
+I choose $\boldsymbol{\lambda}_0$ according to the 1st quartile, and 3rd quartile. I choose $\boldsymbol{\Gamma}_0$ so that the diagonals 0.9 and the off-diagonals are 0.1 (common practice in book).
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+modpois2s <-pois.HMM.mle(x, m, lambda0, gamma0, delta0 = c(1/3,1/3), stationary=FALSE)
+modpois2s
+```
+
+Get 95% confidence intervals for fitted parameters
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+CI2 = pois.HMM.CI(x, 20, modpois2s, stationary = TRUE)
+CI2
+```
+
+Now I find the underlying state sequence using global decoding by the Viterbi algorithm
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+state_seq <- pois.HMM.viterbi(x, modpois2s)
+poisdata2s <- poisdata
+poisdata2s$GuessState <- as.factor(state_seq)
+```
+
+```{r, fig.show="hold", out.width="50%", echo=FALSE, fig.cap = "LEFT: Histogram of observations with state dependent poisson distributions and their 95% confidence intervals overlayed. Black line is the marginal distribution. RIGHT: Timeseries of first 300 observations with colors corresponding fitted hidden states decoded by Viterbi algorithm."}
+pois_hist_dist_CI(2, poisdata2s, modpois2s, CI2)
+timeseriesfit(head(poisdata2s, 300))
+```
+
+```{r, echo = FALSE, fig.cap = "Timeseries of first 80 observations. The dashed lines are the fitted means (lambda) for each state dependent poisson distribution. The colors of the points correspond to the fitted state of the observation at that time."}
+timeseries_states(2, head(poisdata2s, 80), modpois2s$lambda, CIup = CI2$lambda.upper.conf , CIlow=CI2$lambda.lower.conf)
+```
+
+```{r, echo = TRUE, warning=FALSE, message=FALSE, fig.cap = "Plots for the normal pseudo-residuals of the fitted 2-state poisson HMM. TOP LEFT: Index plot of the normal pseudo residuals. TOP RIGHT: Histogram of the normal pseudo-residuals with N(0,1) overlayed. BOTTOM LEFT: Quantile–quantile plot of the normal pseudo-residuals. BOTTOM RIGHT: Autocorrelation function of the normal pseudo-residuals."}
+pr <- pois.HMM.pseudo_residuals(x, modpois2s)
+
+poisdata2s$PR_lo <- pr$lo
+poisdata2s$PR <- pr$mi
+poisdata2s$PR_hi <- pr$hi
+
+index2 <- pr.plot.discr(poisdata2s)
+hist2 <- pr.hist(poisdata2s)
+qq2<- pr.qq(poisdata2s)
+acf2 <- pr.acf(poisdata2s$PR)
+grid.arrange(index2,hist2,qq2,acf2, ncol=2)
+```
+
+## Fit the Generated Data with a 4-State Poisson HMM
+
+Summarize the data so that I can pick reasonable lambdas.
+```{r, echo = TRUE}
+Q1 = as.numeric(summary[2])-2
+med = as.numeric(summary[3])-2
+Q2 = as.numeric(summary[5])-2
+w = as.numeric(summary[5])+4
+
+m       <-4
+lambda0 <-c(Q1,med,Q2,w)
+gamma0  <-matrix(c(0.91 ,0.03 ,0.03, 0.03,
+                   0.03 ,0.91 ,0.03, 0.03,
+                   0.03 ,0.03, 0.03 ,0.91),m,m,byrow=TRUE) 
+summary
+```
+I choose $\boldsymbol{\lambda}_0$ based on the 1st quartile, median, and 3rd quartile with some variation. I choose $\boldsymbol{\Gamma}_0$ so that the diagonals 0.91 and the off-diagonals are 0.03.
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+modpois4s <-pois.HMM.mle(x, m, lambda0, gamma0, c(1/3,1/3,1/3,1/3), stationary=FALSE)
+modpois4s
+```
+
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+CI4 = pois.HMM.CI(x, 20, modpois4s, stationary = TRUE)
+CI4
+```
+
+
+Now I find the underlying state sequence using global decoding by the Viterbi algorithm
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+state_seq <- pois.HMM.viterbi(x, modpois4s)
+poisdata4s <- poisdata
+poisdata4s$GuessState <- as.factor(state_seq)
+```
+
+```{r, fig.show="hold", out.width="50%", echo=FALSE, fig.cap = "LEFT: Histogram of observations with state dependent poisson distributions and their 95% confidence intervals overlayed. Black line is the marginal distribution. RIGHT: Timeseries of first 300 observations with colors corresponding fitted hidden states decoded by Viterbi algorithm."}
+pois_hist_dist_CI(4, poisdata4s, modpois4s, CI4)
+timeseriesfit(head(poisdata4s, 300))
+```
+
+We can visualize the state sequence and observations the same way as before (without the true states)
+
+```{r, echo = FALSE, fig.cap = "Timeseries of first 80 observations. The dashed lines are the fitted means for each state dependent poisson distribution. The colors of the points correspond to the fitted state of the observation at that time."}
+timeseries_states(4, tail(poisdata4s, 80), modpois4s$lambda, CIup = CI4$lambda.upper.conf, CIlow = CI4$lambda.lower.conf)
+```
+
+```{r, echo = TRUE, message=FALSE, warning=FALSE, fig.cap = "Plots for the normal pseudo-residuals of the fitted 4-state poisson HMM. TOP LEFT: Index plot of the normal pseudo residuals. TOP RIGHT: Histogram of the normal pseudo-residuals with N(0,1) overlayed. BOTTOM LEFT: Quantile–quantile plot of the normal pseudo-residuals. BOTTOM RIGHT: Autocorrelation function of the normal pseudo-residuals."}
+pr <- pois.HMM.pseudo_residuals(x, modpois4s)
+
+poisdata4s$PR_lo <- pr$lo
+poisdata4s$PR <- pr$mi
+poisdata4s$PR_hi <- pr$hi
+
+index4 <- pr.plot.discr(poisdata4s)
+hist4 <- pr.hist(poisdata4s)
+qq4 <- pr.qq(poisdata4s)
+acf4 <- pr.acf(poisdata4s$PR)
+grid.arrange(index4,hist4,qq4,acf4, ncol=2)
+```
+
+```{r, echo = FALSE, fig.show="hold", fig.cap= "Each row shows plots of the pseudo residuals for different fitted HMMs. The first row is for a 2-state HMM with poisson state dependent distributions. The second is a 3-State poisson distributed HMM and the third is a 4-state poisson distributed HMM. The first column shows index plots of the normal pseudo-residuals. The second column shows the histograms of the normal pseudo-residuals with N(0,1) overlayed. The third column shows the quantile–quantile plots of the normal pseudo-residuals. The fourth column shows the autocorrelation functions of the normal pseudo-residuals", message=FALSE, warning=FALSE}
+grid.arrange(pr.plot.discr(poisdata2s, labs=FALSE),
+             pr.hist(poisdata2s, labs=FALSE),
+             pr.qq(poisdata2s, labs=FALSE),
+             pr.acf(poisdata2s$PR, labs=FALSE),
+             pr.plot.discr(poisdata3s, labs=FALSE),
+             pr.hist(poisdata3s, labs=FALSE),
+             pr.qq(poisdata3s, labs=FALSE),
+             pr.acf(poisdata3s$PR, labs=FALSE),
+             pr.plot.discr(poisdata4s, labs=FALSE),
+             pr.hist(poisdata4s, labs=FALSE),
+             pr.qq(poisdata4s, labs=FALSE),
+             pr.acf(poisdata4s$PR, labs=FALSE), ncol=4)
+```
