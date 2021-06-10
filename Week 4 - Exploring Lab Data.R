@@ -116,7 +116,3 @@ line_plot(data, "BigDaddy_3Apr17_line_plot.png")
 hist_plot(data, "BigDaddy_3Apr17_histogram.png")
 acf_plot(data, "BigDaddy_3Apr17_acf.png")
 filtered_line_plot(filtered_data, "Lady_27Mar17_line_plot_filtered.png")
-
-count(filtered_data$Behavior)
-head(data)
-head(timestamps)
