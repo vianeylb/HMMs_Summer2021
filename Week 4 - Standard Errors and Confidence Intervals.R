@@ -66,18 +66,19 @@ norm.jacobian <- function(m, parvect, stationary=TRUE){
 }
 
 #Using bootstrapping
-norm.bootstrap.estimates <- function(mod, n, stationary){
-  mu_estimate <- numeric(n)
-  sigma_estimate <- numeric(n)
-  gamma_estimate <- numeric(n)
-  delta_estimate <- numeric(n)
+norm.bootstrap.estimates <- function(mod, n, len, stationary){
+  m <- mod$m
+  mu_estimate <- numeric(n*m)
+  sigma_estimate <- numeric(n*m)
+  gamma_estimate <- numeric(n*m*m)
+  delta_estimate <- numeric(n*m)
   for (i in 1:n){
-    sample <- norm.HMM.generate_sample(1000, mod)
+    sample <- norm.HMM.generate_sample(len, mod)
     mod2 <- norm.HMM.mle(sample$obs, m, mod$mu, mod$sigma, mod$gamma, mod$delta, stationary=stationary)
-    mu_estimate[i] <- mod2$mu
-    sigma_estimate[i] <- mod2$sigma
-    gamma_estimate[i] <- mod2$gamma
-    delta_estimate[i] <- mod2$delta
+    mu_estimate[((i-1)*m+1):(i*m)] <- mod2$mu
+    sigma_estimate[((i-1)*m+1):(i*m)] <- mod2$sigma
+    gamma_estimate[((i-1)*m*m+1):(i*m*m)] <- mod2$gamma
+    delta_estimate[((i-1)*m+1):(i*m)] <- mod2$delta
   }
   return(list(mu=mu_estimate, sigma=sigma_estimate, gamma=gamma_estimate, delta=delta_estimate))
 }
