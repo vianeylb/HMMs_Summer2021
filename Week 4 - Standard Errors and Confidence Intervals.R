@@ -7,59 +7,59 @@ source("Week 2 - Fitting HMM.R")
 source("Week 3 - Functions.R")
 
 #Using Hessian
-norm.HMM.mle <- function(x, m, mu0, sigma0, gamma0, delta0=NULL, stationary=TRUE,...)
+norm.HMM.mle <- function(x, m, mu0, sigma0, gamma0, delta0=NULL, stationary=TRUE,hessian=FALSE,...)
 {
   parvect0 <- norm.HMM.pn2pw(m, mu, sigma0, gamma0, delta0, stationary=stationary)
-  mod <- nlm(norm.HMM.mllk, parvect0, x=x,m=m, stationary=stationary, hessian=TRUE)
+  mod <- nlm(norm.HMM.mllk, parvect0, x=x,m=m, stationary=stationary, hessian=hessian)
   pn <- norm.HMM.pw2pn(m=m, mod$estimate, stationary=stationary)
   mllk <- mod$minimum
-  if (det(mod$hessian) != 0){
-    h <- solve(mod$hessian)
-    jacobian <- norm.jacobian(m, mod$estimate, stationary=stationary) 
-    h <- t(jacobian)%*%h%*%jacobian
-  }
+  
   np <- length(parvect0)
   AIC <- 2*(mllk+np)
   n <- sum(!is.na(x))
   BIC <- 2*mllk+np*log(n)
-  if (det(mod$hessian) != 0){
-    list(m=m, mu=pn$mu, sigma=pn$sigma, gamma=pn$gamma, delta=pn$delta,
-         code=mod$code, mllk=mllk, AIC=AIC, BIC=BIC, invhessian=h)
+  
+  if (hessian){
+    np2 <- np - m + 1
+    if (!stationary){
+      h <- mod$hessian[1:np2,1:np2]
+    }
+    else{
+      h <- mod$hessian
+    }
+    if (det(h) != 0){
+      h <- solve(h)
+      jacobian <- norm.jacobian(m, n=np2, mod$estimate, stationary=stationary) 
+      h <- t(jacobian)%*%h%*%jacobian
+      return(list(m=m, mu=pn$mu, sigma=pn$sigma, gamma=pn$gamma, delta=pn$delta,
+           code=mod$code, mllk=mllk, AIC=AIC, BIC=BIC, invhessian=h))
+    }
+    else{
+      return(list(m=m, mu=pn$mu, sigma=pn$sigma, gamma=pn$gamma, delta=pn$delta,
+                  code=mod$code, mllk=mllk, AIC=AIC, BIC=BIC, hessian=mod$hessian))
+    }
   }
   else{
-    list(m=m, mu=pn$mu, sigma=pn$sigma, gamma=pn$gamma, delta=pn$delta,
-         code=mod$code, mllk=mllk, AIC=AIC, BIC=BIC)
+    return(list(m=m, mu=pn$mu, sigma=pn$sigma, gamma=pn$gamma, delta=pn$delta,
+         code=mod$code, mllk=mllk, AIC=AIC, BIC=BIC))
   }
 }
 
-norm.jacobian <- function(m, parvect, stationary=TRUE){
-  jacobian <- matrix(0, nrow=length(parvect), ncol=length(parvect))
+norm.jacobian <- function(m, n, parvect, stationary=TRUE){
+  pn <- norm.HMM.pw2pn(m, parvect, stationary)
+  jacobian <- matrix(0, nrow=n, ncol=n)
   jacobian[1:m, 1:m] <- diag(m)
-  jacobian[(m+1):(2*m), (m+1):(2*m)] <- diag(exp(parvect[(m+1):(2*m)]))
-  gamma0 <- diag(m)
-  gamma0[!gamma0] <- exp(parvect[(2*m+1):(m+m*m)])
+  jacobian[(m+1):(2*m), (m+1):(2*m)] <- diag(pn$sigma)
   count <- 0
   for (i in 1:m){
     for (j in 1:m){
       if (j != i){
         count <- count + 1
-        k <- (sum(gamma0[i,]))
-        foo <- -(gamma0[i,]*gamma0[i,j])/(k^2)
-        foo[j] <- (gamma0[i,j]*k - gamma0[i,j]^2)/(k^2)
+        foo <- -pn$gamma[i,j]*pn$gamma[i,]
+        foo[j] <- pn$gamma[i,j]*(1-pn$gamma[i,j])
         foo <- foo[-i]
         jacobian[2*m+count, (2*m+(i-1)*(m-1)+1):(2*m+i*(m-1))] <- foo
       }
-    }
-  }
-  if(!stationary)
-  {
-    delta0 <- c(1, exp(parvect[(m+m*m+1):(m*m+2*m-1)]))
-    k <- (sum(gamma0[i,]))
-    for (i in 2:m){
-      foo <- -(delta0*delta0[i])/(k^2)
-      foo[i] <- (delta0[i]*k - delta0[i]^2)/(k^2)
-      foo <- foo[-1]
-      jacobian[(m+1)*m, ((m+1)*m):((m+2)*m-1)]<- foo
     }
   }
   return(jacobian)
@@ -111,19 +111,30 @@ norm.bootstrap.ci <- function(mod, bootstrap, alpha, m, n){
   delta_upper <- rep(NA, m)
   bootstrap1 <- data.frame(mu=bootstrap$mu, sigma=bootstrap$sigma, delta=bootstrap$delta)
   bootstrap2 <- data.frame(gamma=bootstrap$gamma)
-  for (i in 0:(m-1)){
-    foo <- bootstrap1 %>% filter((row_number() %% m) == i)
-    mu_lower[m-i] <- 2*mod$mu[m-i] - quantile(foo$mu, 1-(alpha/2), names=FALSE)
-    mu_upper[m-i] <- 2*mod$mu[m-i] - quantile(foo$mu, alpha/2, names=FALSE)
-    sigma_lower[m-i] <- 2*mod$sigma[m-i] - quantile(foo$sigma, 1-(alpha/2), names=FALSE)
-    sigma_upper[m-i] <- 2*mod$sigma[m-i] - quantile(foo$sigma, alpha/2, names=FALSE)
-    delta_lower[m-i] <- 2*mod$delta[m-i] - quantile(foo$delta, 1-(alpha/2), names=FALSE)
-    delta_upper[m-i] <- 2*mod$delta[m-i] - quantile(foo$delta, alpha/2, names=FALSE)
+  for (i in 1:m){
+    if (i==m){
+      foo <- bootstrap1 %>% filter((row_number() %% m) == 0)
+    }
+    else{
+      foo <- bootstrap1 %>% filter((row_number() %% m) == i)
+    }
+    mu_lower[i] <- 2*mod$mu[i] - quantile(foo$mu, 1-(alpha/2), names=FALSE)
+    mu_upper[i] <- 2*mod$mu[i] - quantile(foo$mu, alpha/2, names=FALSE)
+    sigma_lower[i] <- 2*mod$sigma[i] - quantile(foo$sigma, 1-(alpha/2), names=FALSE)
+    sigma_upper[i] <- 2*mod$sigma[i] - quantile(foo$sigma, alpha/2, names=FALSE)
+    delta_lower[i] <- 2*mod$delta[i] - quantile(foo$delta, 1-(alpha/2), names=FALSE)
+    delta_upper[i] <- 2*mod$delta[i] - quantile(foo$delta, alpha/2, names=FALSE)
   }
-  for (i in 0:(m*m-1)){
+  for (i in 1:(m*m)){
+    if (i==(m*m)){
+      foo <- bootstrap2 %>% filter((row_number() %% (m*m)) == 0)
+    }
+    else{
+      foo <- bootstrap2 %>% filter((row_number() %% (m*m)) == i)
+    }
     foo <- bootstrap2 %>% filter((row_number() %% (m*m)) == i)                                                                                                                                                                                                                                                                                                                                                 
-    gamma_lower[m-i] <- 2*mod$gamma[m-i] - quantile(foo$gamma, 1-(alpha/2), names=FALSE)
-    gamma_upper[m-i] <- 2*mod$gamma[m-i] - quantile(foo$gamma, alpha/2, names=FALSE)
+    gamma_lower[i] <- 2*mod$gamma[i] - quantile(foo$gamma, 1-(alpha/2), names=FALSE)
+    gamma_upper[i] <- 2*mod$gamma[i] - quantile(foo$gamma, alpha/2, names=FALSE)
   }
   return(list(mu_lower=mu_lower, mu_upper=mu_upper, 
               sigma_lower=sigma_lower, sigma_upper=sigma_upper, 
@@ -149,9 +160,7 @@ norm.mle <- norm.HMM.mle(norm.sample$obs, m, mu0, sigma0, gamma0, delta0, statio
 norm.mle
 sd <- sqrt(diag(norm.mle$invhessian))
 theta <- c(norm.mle$mu, norm.mle$sigma, 
-           norm.mle$gamma[1,2:3],
-           norm.mle$gamma[2,-2],
-           norm.mle$gamma[3, 1:2])
+           as.vector(norm.mle$gamma[!diag(m)]))
 norm.cih <- list(lower=theta-1.96*sd, upper=theta+1.96*sd)
 norm.cih
 #Testing bootstrapping 
