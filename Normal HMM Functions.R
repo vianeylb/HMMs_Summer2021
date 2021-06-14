@@ -92,39 +92,39 @@ norm.HMM.mllk <- function(parvect, x, m, stationary=TRUE ,...){
 }
 
 
-#A.1.4 (modified for normal)
-norm.HMM.mle <- function(x, m, mu0, sigma0, gamma0, delta0=NULL, stationary=TRUE,...) {
-  #' Compute Maximum Likelihood Estimate
-  #'
-  #' This function is for normal distributions starting with natural parameters
-  #' 
-  #' x        = observations,
-  #' m        = number of states,
-  #' mu0      = inital guess for natural means
-  #' sigma0   = initial guess for natural standard deviations
-  #' gamma0   = initial guess for natural transition probability matrix
-  #' delta0   = initial guess for initial state distribution
-  
-  parvect0 <- norm.HMM.pn2pw(m, mu0, sigma0, gamma0, delta0, stationary=stationary)
-  mod <- nlm(norm.HMM.mllk, parvect0, x=x, m=m, stationary=stationary) 
-  
-  pn    <- norm.HMM.pw2pn(m=m, mod$estimate, stationary=TRUE) 
-  mllk  <- mod$minimum 
-  np    <- length(parvect0) 
-  AIC   <- 2*(mllk+np) 
-  n     <- sum(!is.na(x)) 
-  BIC   <- 2*mllk+np*log(n) 
-  
-  list(m=m, 
-       mu=pn$mu, 
-       sigma=pn$sigma,
-       gamma=pn$gamma, 
-       delta=pn$delta, 
-       code=mod$code, 
-       mllk=mllk,
-       AIC=AIC,
-       BIC=BIC)
-}
+#' #A.1.4 (modified for normal)
+#' norm.HMM.mle <- function(x, m, mu0, sigma0, gamma0, delta0=NULL, stationary=TRUE,...) {
+#'   #' Compute Maximum Likelihood Estimate
+#'   #'
+#'   #' This function is for normal distributions starting with natural parameters
+#'   #' 
+#'   #' x        = observations,
+#'   #' m        = number of states,
+#'   #' mu0      = inital guess for natural means
+#'   #' sigma0   = initial guess for natural standard deviations
+#'   #' gamma0   = initial guess for natural transition probability matrix
+#'   #' delta0   = initial guess for initial state distribution
+#'   
+#'   parvect0 <- norm.HMM.pn2pw(m, mu0, sigma0, gamma0, delta0, stationary=stationary)
+#'   mod <- nlm(norm.HMM.mllk, parvect0, x=x, m=m, stationary=stationary) 
+#'   
+#'   pn    <- norm.HMM.pw2pn(m=m, mod$estimate, stationary=TRUE) 
+#'   mllk  <- mod$minimum 
+#'   np    <- length(parvect0) 
+#'   AIC   <- 2*(mllk+np) 
+#'   n     <- sum(!is.na(x)) 
+#'   BIC   <- 2*mllk+np*log(n) 
+#'   
+#'   list(m=m, 
+#'        mu=pn$mu, 
+#'        sigma=pn$sigma,
+#'        gamma=pn$gamma, 
+#'        delta=pn$delta, 
+#'        code=mod$code, 
+#'        mllk=mllk,
+#'        AIC=AIC,
+#'        BIC=BIC)
+#' }
 
 
 #A.1.4 (modified for normal)
@@ -389,4 +389,74 @@ norm.HMM.CI_MonteCarlo <- function(range, m, n=100, params_SE, level=0.975){
   }
   return(list(range=range, upper=upper, lower=lower))
 }
+
+
+norm.HMM.mle <- function(x, m, mu0, sigma0, gamma0, delta0=NULL, stationary=TRUE, hessian=TRUE,...){
+  parvect0 <- norm.HMM.pn2pw(m, mu0, sigma0, gamma0, delta0, stationary=stationary)
+  mod <- nlm(norm.HMM.mllk, parvect0, x=x,m=m, stationary=stationary, hessian=hessian)
+  pn <- norm.HMM.pw2pn(m=m, mod$estimate, stationary=stationary)
+  mllk <- mod$minimum
+  if (hessian){
+    h <- mod$hessian
+    if (det(h) != 0){
+      h <- solve(h)
+      jacobian <- norm.jacobian(m, mod$estimate, stationary=stationary)
+      h <- t(jacobian)%*%h%*%jacobian
+    }
+  }
+  np <- length(parvect0)
+  AIC <- 2*(mllk+np)
+  n <- sum(!is.na(x))
+  BIC <- 2*mllk+np*log(n)
+  if (hessian){
+    return(list(m=m, mu=pn$mu, sigma=pn$sigma, gamma=pn$gamma, 
+                delta=pn$delta, code=mod$code, mllk=mllk, 
+                AIC=AIC, BIC=BIC, hessian = mod$hessian, invhessian = h))
+  }
+  else{
+    return(list(m=m, mu=pn$mu, sigma=pn$sigma, gamma=pn$gamma, 
+                delta=pn$delta, code=mod$code, mllk=mllk, 
+                AIC=AIC, BIC=BIC))
+  }
+}
+
+
+norm.jacobian <- function(m, parvect, stationary=TRUE){
+  n <- 2*m+m*(m-1)
+  pn <- norm.HMM.pw2pn(m=m, parvect=parvect, stationary=stationary)
+  jacobian <- matrix(0, nrow=n, ncol=n)
+  jacobian[1:m, 1:m] <- diag(m)
+  jacobian[(m+1):(2*m), (m+1):(2*m)] <- diag(pn$sigma)
+  mat <- pn$gamma
+  diag(mat) <- NA
+  mat <-matrix(mat[which(!is.na(mat))],nrow=m,ncol=m-1, byrow=TRUE)
+  for (k in 1:m){
+    M <- matrix(numeric((m-1)*(m-1)),nrow=m-1,ncol=m-1)
+    for (i in 1:(m-1)){
+      for (j in 1:(m-1)){
+        if (i==j){
+          M[i,j] <- mat[k,i]*(1 - mat[k,i])}
+        else {
+          M[i,j] <- -mat[k,i]*mat[k,j]}
+      }
+    }
+    jacobian[(2*m+1+(k-1)*(m-1)):(2*m+k*(m-1)),(2*m+1+(k-1)*(m-1)):(2*m+k*(m-1))] <- M
+  }
+  return(jacobian)
+}
+
+
+norm.HMM.SE_hessian <- function(m, mod){
+  h <- sqrt(diag(mod$invhessian))
+  mu.SE <- h[1:m]
+  sigma.SE <- h[(m+1):(2*m)]
+  gamma.SE <- diag(m)
+  gamma.SE[!gamma.SE] <- h[(2*m+1):(2*m+m*(m-1))]
+  diag(gamma.SE) <- NA
+  return(list(mu=mod$mu, mu.SE=mu.SE, sigma=mod$sigma, sigma.SE=sigma.SE,
+              gamma=mod$gamma, gamma.SE=gamma.SE))
+}
+
+
+
 
