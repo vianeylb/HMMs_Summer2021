@@ -71,7 +71,7 @@ norm.HMM.pseudo_residuals <- function(x, mod, type)
       npsr[i] <- qnorm(foo%*%P[i,])
     }
     
-    return(data.frame(npsr, x, index=c(1:n)))
+    return(data_frame(npsr, x, index=c(1:n)))
   }
   else if (type=="forecast"){
     n <- length(x)
@@ -83,14 +83,14 @@ norm.HMM.pseudo_residuals <- function(x, mod, type)
     }
     
     npsr <- rep(NA, n)
-    npsr[1] <- qnorm(mod$delta %*% P[1,])
+    npsr[1] <- qnorm(delta %*% P[1,])
     for (i in 2:n) {
       la_max <- max(la[,i-1])
       a <- exp(la[,i-1]-la_max)
-      npsr[i] <- qnorm(t(a)%*%(gamma/sum(a))%*%P[i,])
+      npsr[i] <- qnorm(t(a)%*%(mod$gamma/sum(a))%*%P[i,])
     }
     
-    return(data.frame(npsr, x, index=c(1:n)))
+    return(data_frame(npsr, x, index=c(1:n)))
   }
 }
 
