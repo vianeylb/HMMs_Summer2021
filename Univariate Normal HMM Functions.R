@@ -16,6 +16,18 @@ graph_hmm_hist <-function(output){
     theme_minimal()
 }
 
+#Get normal marginal distribution 
+norm.marginal <- function(start, end, n, mod){
+  #Get stationary distribution
+  delta <-solve(t(diag(mod$m)-mod$gamma+1),rep(1,mod$m))
+  x <- seq(start, end, length.out = n)
+  mnorm <- delta[1]*dnorm(x, mean=mod$mu[1], sd=mod$sigma[1])
+  for (i in 2:mod$m){
+    mnorm <- mnorm + delta[i]*dnorm(x, mean=mod$mu[i], sd=mod$sigma[i])
+  }
+  return(data.frame(x=x, mnorm=mnorm))
+}
+
 #Transform normal natural parameters to working parameters
 #mu does not need to be transformed
 #Transform sigma by taking log
