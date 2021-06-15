@@ -79,7 +79,7 @@ norm.HMM.mllk <- function(parvect, x, m, stationary=TRUE, ...)
 #Computing MLE from natural parameters
 norm.HMM.mle <- function(x, m, mu0, sigma0, gamma0, delta0=NULL, stationary=TRUE,hessian=FALSE,...)
 {
-  parvect0 <- norm.HMM.pn2pw(m, mu, sigma0, gamma0, delta0, stationary=stationary)
+  parvect0 <- norm.HMM.pn2pw(m, mu0, sigma0, gamma0, delta0, stationary=stationary)
   mod <- nlm(norm.HMM.mllk, parvect0, x=x,m=m, stationary=stationary, hessian=hessian)
   pn <- norm.HMM.pw2pn(m=m, mod$estimate, stationary=stationary)
   mllk <- mod$minimum
