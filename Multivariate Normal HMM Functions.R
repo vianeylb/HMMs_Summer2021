@@ -202,7 +202,7 @@ mvnorm.HMM.viterbi <- function(x, mod)
   iv[n] <- which.max(xi[n,])
   for (t in (n-1):1)
     iv[t] <- which.max(mod$gamma[,iv[t+1]]*xi[t,])
-  return(data.frame(index=1:n, states=iv))
+  return(data_frame(index=1:n, states=iv))
 }
 
 #Computing log(forward probabilities) for normal distribution
@@ -274,7 +274,7 @@ mvnorm.HMM.pseudo_residuals <- function(x, mod, k, type)
       npsr[i] <- qnorm(foo%*%P[i,])
     }
     
-    return(data.frame(npsr, x, index=c(1:n)))
+    return(data_frame(npsr, x, index=c(1:n)))
   }
   else if (type=="forecast"){
     n <- length(x)
@@ -293,7 +293,7 @@ mvnorm.HMM.pseudo_residuals <- function(x, mod, k, type)
       npsr[i] <- qnorm(t(a)%*%(gamma/sum(a))%*%P[i,])
     }
     
-    return(data.frame(npsr, x, index=c(1:n)))
+    return(data_frame(npsr, x, index=c(1:n)))
   }
 }
 
@@ -362,7 +362,7 @@ mvnorm.bootstrap.ci <- function(mod, bootstrap, alpha, m, k){
   #Rows of matrix are states, columns are variables
   mu_lower <- matrix(NA, m, k)
   mu_upper <- matrix(NA, m, k)
-  bootstrap_mu <- data.frame(mu=bootstrap$mu)
+  bootstrap_mu <- data_frame(mu=bootstrap$mu)
   mu <- unlist(mvnorm.mle$mu, use.names = FALSE)
   for (i in 1:m){
     for (j in 1:k){
@@ -383,7 +383,7 @@ mvnorm.bootstrap.ci <- function(mod, bootstrap, alpha, m, k){
   tvect <- mat[lower.tri(mat, diag=TRUE)]
   sigma_lower = matrix(NA, 3, t)
   sigma_upper = matrix(NA, 3, t)
-  bootstrap_sigma<- data.frame(sigma=bootstrap$sigma)
+  bootstrap_sigma<- data_frame(sigma=bootstrap$sigma)
   sigma <- unlist(mvnorm.mle$sigma, use.names = FALSE)
   for (i in 1:m){
     for (j in 1:t){
@@ -401,7 +401,7 @@ mvnorm.bootstrap.ci <- function(mod, bootstrap, alpha, m, k){
   
   gamma_lower <- rep(NA, m*m)
   gamma_upper <- rep(NA, m*m)
-  bootstrap_gamma <- data.frame(gamma=bootstrap$gamma)
+  bootstrap_gamma <- data_frame(gamma=bootstrap$gamma)
   gamma <- mod$gamma
   for (i in 1:(m*m)){
     if (i==(m*m)){
@@ -416,7 +416,7 @@ mvnorm.bootstrap.ci <- function(mod, bootstrap, alpha, m, k){
   
   delta_lower <- rep(NA, m)
   delta_upper <- rep(NA, m)
-  bootstrap_delta <- data.frame(delta=bootstrap$delta)
+  bootstrap_delta <- data_frame(delta=bootstrap$delta)
   delta <- mod$delta
   for (i in 1:m){
     if (i==m){
