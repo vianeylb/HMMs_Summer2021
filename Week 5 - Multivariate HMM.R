@@ -265,7 +265,7 @@ mvnorm.HMM.pseudo_residuals <- function(x, mod, k, type)
     }
     
     npsr <- rep(NA, n)
-    npsr[1] <- qnorm(rbind(c(1, 0, 0)) %*% P[1,])
+    npsr[1] <- qnorm(mod$delta %*% P[1,])
     for (i in 2:n) {
       a <- exp(la[,i-1]-lafact[i])
       b <- exp(lb[,i]-lbfact[i])
@@ -286,7 +286,7 @@ mvnorm.HMM.pseudo_residuals <- function(x, mod, k, type)
     }
     
     npsr <- rep(NA, n)
-    npsr[1] <- qnorm(rbind(c(1, 0, 0)) %*% P[1,])
+    npsr[1] <- qnorm(mod$delta %*% P[1,])
     for (i in 2:n) {
       la_max <- max(la[,i-1])
       a <- exp(la[,i-1]-la_max)
