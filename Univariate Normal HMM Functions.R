@@ -25,7 +25,7 @@ norm.marginal <- function(start, end, n, mod){
   for (i in 2:mod$m){
     mnorm <- mnorm + delta[i]*dnorm(x, mean=mod$mu[i], sd=mod$sigma[i])
   }
-  return(data.frame(x=x, mnorm=mnorm))
+  return(data_frame(x=x, mnorm=mnorm))
 }
 
 #Transform normal natural parameters to working parameters
@@ -136,7 +136,7 @@ norm.HMM.generate_sample <- function(ns, mod)
   state[1] <- sample(mvect, 1, prob=mod$delta)
   for (i in 2:ns) state[i] <- sample(mvect, 1, prob=mod$gamma[state[i-1],])
   x <- rnorm(ns, mean = mod$mu[state], sd = mod$sigma[state])
-  return(data.frame(index=c(1:ns), state=state, obs=x)) 
+  return(data_frame(index=c(1:ns), state=state, obs=x)) 
 }
 
 #Global decoding by the Viterbi algorithm
@@ -155,7 +155,7 @@ norm.HMM.viterbi <- function(x, mod)
   iv[n] <- which.max(xi[n,])
   for (t in (n-1):1)
     iv[t] <- which.max(mod$gamma[,iv[t+1]]*xi[t,])
-  return(data.frame(index=1:n, states=iv))
+  return(data_frame(index=1:n, states=iv))
 }
 
 #Computing log(forward probabilities) for normal distribution
@@ -202,8 +202,14 @@ norm.HMM.lbackward <- function(x, mod)
 
 #Normal pseudo-residuals for Normal HMM
 #Type can be "ordinary" or "forecast"
-norm.HMM.pseudo_residuals <- function(x, mod, type)
+norm.HMM.pseudo_residuals <- function(x, mod, type, stationary)
 {
+  if(stationary){
+    delta <-solve(t(diag(mod$m)-mod$gamma+1),rep(1,mod$m))
+  } 
+  else {
+    delta <- mod$delta
+  }
   if (type=="ordinary"){
     n <- length(x)
     la <- norm.HMM.lforward(x, mod)
@@ -217,7 +223,7 @@ norm.HMM.pseudo_residuals <- function(x, mod, type)
     }
     
     npsr <- rep(NA, n)
-    npsr[1] <- qnorm(mod$delta %*% P[1,])
+    npsr[1] <- qnorm(delta %*% P[1,])
     for (i in 2:n) {
       a <- exp(la[,i-1]-lafact[i])
       b <- exp(lb[,i]-lbfact[i])
@@ -226,7 +232,7 @@ norm.HMM.pseudo_residuals <- function(x, mod, type)
       npsr[i] <- qnorm(foo%*%P[i,])
     }
     
-    return(data.frame(npsr, x, index=c(1:n)))
+    return(data_frame(npsr, x, index=c(1:n)))
   }
   else if (type=="forecast"){
     n <- length(x)
@@ -238,14 +244,14 @@ norm.HMM.pseudo_residuals <- function(x, mod, type)
     }
     
     npsr <- rep(NA, n)
-    npsr[1] <- qnorm(mod$delta %*% P[1,])
+    npsr[1] <- qnorm(delta %*% P[1,])
     for (i in 2:n) {
       la_max <- max(la[,i-1])
       a <- exp(la[,i-1]-la_max)
-      npsr[i] <- qnorm(t(a)%*%(gamma/sum(a))%*%P[i,])
+      npsr[i] <- qnorm(t(a)%*%(mod$gamma/sum(a))%*%P[i,])
     }
     
-    return(data.frame(npsr, x, index=c(1:n)))
+    return(data_frame(npsr, x, index=c(1:n)))
   }
 }
 
@@ -313,8 +319,8 @@ norm.bootstrap.ci <- function(mod, bootstrap, alpha, m){
   gamma_upper <- rep(NA, m*m)
   delta_lower <- rep(NA, m)
   delta_upper <- rep(NA, m)
-  bootstrap1 <- data.frame(mu=bootstrap$mu, sigma=bootstrap$sigma, delta=bootstrap$delta)
-  bootstrap2 <- data.frame(gamma=bootstrap$gamma)
+  bootstrap1 <- data_frame(mu=bootstrap$mu, sigma=bootstrap$sigma, delta=bootstrap$delta)
+  bootstrap2 <- data_frame(gamma=bootstrap$gamma)
   for (i in 1:m){
     if (i==m){
       foo <- bootstrap1 %>% filter((row_number() %% m) == 0)
@@ -345,3 +351,4 @@ norm.bootstrap.ci <- function(mod, bootstrap, alpha, m){
               gamma_lower=gamma_lower, gamma_upper=gamma_upper, 
               delta_lower=delta_lower, delta_upper=delta_upper))
 }
+
