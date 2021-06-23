@@ -392,60 +392,60 @@ norm.HMM.CI_MonteCarlo <- function(range, m, n=100, params_SE, level=0.975){
 }
 
 #MLE that also conputed the inverse hessian (variance-covariance matrix)
-norm.HMM.mle <- function(x, m, mu0, sigma0, gamma0, delta0=NULL, stationary=TRUE, hessian=TRUE,...){
-  parvect0 <- norm.HMM.pn2pw(m, mu0, sigma0, gamma0, delta0, stationary=stationary)
-  mod <- nlm(norm.HMM.mllk, parvect0, x=x,m=m, stationary=stationary, hessian=hessian)
-  pn <- norm.HMM.pw2pn(m=m, mod$estimate, stationary=stationary)
-  mllk <- mod$minimum
-  if (hessian){
-    h <- mod$hessian
-    if (det(h) != 0){
-      h <- solve(h)
-      jacobian <- norm.jacobian(m, mod$estimate, stationary=stationary)
-      h <- t(jacobian)%*%h%*%jacobian
-    }
-  }
-  np <- length(parvect0)
-  AIC <- 2*(mllk+np)
-  n <- sum(!is.na(x))
-  BIC <- 2*mllk+np*log(n)
-  if (hessian){
-    return(list(m=m, mu=pn$mu, sigma=pn$sigma, gamma=pn$gamma, 
-                delta=pn$delta, code=mod$code, mllk=mllk, 
-                AIC=AIC, BIC=BIC, hessian = mod$hessian, invhessian = h))
-  }
-  else{
-    return(list(m=m, mu=pn$mu, sigma=pn$sigma, gamma=pn$gamma, 
-                delta=pn$delta, code=mod$code, mllk=mllk, 
-                AIC=AIC, BIC=BIC))
-  }
-}
+# norm.HMM.mle <- function(x, m, mu0, sigma0, gamma0, delta0=NULL, stationary=TRUE, hessian=TRUE,...){
+#   parvect0 <- norm.HMM.pn2pw(m, mu0, sigma0, gamma0, delta0, stationary=stationary)
+#   mod <- nlm(norm.HMM.mllk, parvect0, x=x,m=m, stationary=stationary, hessian=hessian)
+#   pn <- norm.HMM.pw2pn(m=m, mod$estimate, stationary=stationary)
+#   mllk <- mod$minimum
+#   if (hessian){
+#     h <- mod$hessian
+#     if (det(h) != 0){
+#       h <- solve(h)
+#       jacobian <- norm.jacobian(m, mod$estimate, stationary=stationary)
+#       h <- t(jacobian)%*%h%*%jacobian
+#     }
+#   }
+#   np <- length(parvect0)
+#   AIC <- 2*(mllk+np)
+#   n <- sum(!is.na(x))
+#   BIC <- 2*mllk+np*log(n)
+#   if (hessian){
+#     return(list(m=m, mu=pn$mu, sigma=pn$sigma, gamma=pn$gamma, 
+#                 delta=pn$delta, code=mod$code, mllk=mllk, 
+#                 AIC=AIC, BIC=BIC, hessian = mod$hessian, invhessian = h))
+#   }
+#   else{
+#     return(list(m=m, mu=pn$mu, sigma=pn$sigma, gamma=pn$gamma, 
+#                 delta=pn$delta, code=mod$code, mllk=mllk, 
+#                 AIC=AIC, BIC=BIC))
+#   }
+# }
 
 
 #compute the jacobian for the conversion of the hessian
-norm.jacobian <- function(m, parvect, stationary=TRUE){
-  n <- 2*m+m*(m-1)
-  pn <- norm.HMM.pw2pn(m=m, parvect=parvect, stationary=stationary)
-  jacobian <- matrix(0, nrow=n, ncol=n)
-  jacobian[1:m, 1:m] <- diag(m)
-  jacobian[(m+1):(2*m), (m+1):(2*m)] <- diag(pn$sigma)
-  mat <- pn$gamma
-  diag(mat) <- NA
-  mat <-matrix(mat[which(!is.na(mat))],nrow=m,ncol=m-1, byrow=TRUE)
-  for (k in 1:m){
-    M <- matrix(numeric((m-1)*(m-1)),nrow=m-1,ncol=m-1)
-    for (i in 1:(m-1)){
-      for (j in 1:(m-1)){
-        if (i==j){
-          M[i,j] <- mat[k,i]*(1 - mat[k,i])}
-        else {
-          M[i,j] <- -mat[k,i]*mat[k,j]}
-      }
-    }
-    jacobian[(2*m+1+(k-1)*(m-1)):(2*m+k*(m-1)),(2*m+1+(k-1)*(m-1)):(2*m+k*(m-1))] <- M
-  }
-  return(jacobian)
-}
+# norm.jacobian <- function(m, parvect, stationary=TRUE){
+#   n <- 2*m+m*(m-1)
+#   pn <- norm.HMM.pw2pn(m=m, parvect=parvect, stationary=stationary)
+#   jacobian <- matrix(0, nrow=n, ncol=n)
+#   jacobian[1:m, 1:m] <- diag(m)
+#   jacobian[(m+1):(2*m), (m+1):(2*m)] <- diag(pn$sigma)
+#   mat <- pn$gamma
+#   diag(mat) <- NA
+#   mat <-matrix(mat[which(!is.na(mat))],nrow=m,ncol=m-1, byrow=TRUE)
+#   for (k in 1:m){
+#     M <- matrix(numeric((m-1)*(m-1)),nrow=m-1,ncol=m-1)
+#     for (i in 1:(m-1)){
+#       for (j in 1:(m-1)){
+#         if (i==j){
+#           M[i,j] <- mat[k,i]*(1 - mat[k,i])}
+#         else {
+#           M[i,j] <- -mat[k,i]*mat[k,j]}
+#       }
+#     }
+#     jacobian[(2*m+1+(k-1)*(m-1)):(2*m+k*(m-1)),(2*m+1+(k-1)*(m-1)):(2*m+k*(m-1))] <- M
+#   }
+#   return(jacobian)
+# }
 
 
 #gets the standard errors from the inverse hessian
@@ -758,7 +758,7 @@ mvnorm.longitudinal.HMM.generate_sample <- function(ns, mod){
 # Subject = c('Sub1', 'Sub2', 'Sub3')
 # x <- array(dim = c(T, v, s), dimnames = list(Time, Variable, Subject))
 
-norm_working_params <- function(num_states, num_subjects = 1, 
+norm_working_params <- function(num_states, num_subjects, 
                                 mu, sigma, gamma, delta = NULL, 
                                 stationary = TRUE) {
   #' Transform normal HMM parameters from natural to working
@@ -787,7 +787,7 @@ norm_working_params <- function(num_states, num_subjects = 1,
   #'   vector of the HMM for the subject corresponding to that index.
   #' @param stationary A logical variable denoting whether to treat the HMM as 
   #'   one with a stationary distribution or without.
-
+  
   tmu     <- numeric()
   tsigma  <- numeric()
   for (i in 1:num_subjects) {
@@ -809,7 +809,8 @@ norm_working_params <- function(num_states, num_subjects = 1,
     for (i in 1:num_subjects) {
       tdelta <- c(tdelta, log(delta[[i]][-1]/delta[[i]][1]))
     }
-  } c(tmu, tsigma, tgamma, tdelta) 
+  } 
+  c(tmu, tsigma, tgamma, tdelta) 
 }
 
 split_vec <- function(vector, start, end, length, exp = FALSE) {
@@ -818,7 +819,17 @@ split_vec <- function(vector, start, end, length, exp = FALSE) {
   #' This function splits a vector from the index start to the index end into
   #' segments of length length and complies them into a list. This function can
   #' also apply the exponential function to the vector elements if desired.
-
+  #' 
+  #' @param vector The vector to be split into a list.
+  #' @param start The first index of the vector vector that will be included in 
+  #'   the list.
+  #' @param end The last index of the vector vector that will be included in the
+  #'   list.
+  #' @param length A value indicating the length of the segments that vector
+  #'   will be split into.
+  #' @param exp A logical variable indicating whether the elements of vector
+  #'   should be transformed with `exp()`.
+  
   if (exp) {
     return(split(exp(vector[start:end]), 
                  ceiling(seq_along(exp(vector[start:end]))/length)))
@@ -826,8 +837,7 @@ split_vec <- function(vector, start, end, length, exp = FALSE) {
   split(vector[start:end], ceiling(seq_along(vector[start:end])/length))
 }
 
-#Transform working parameters to natural
-norm_natural_params <- function(num_states, num_variables, num_subjects = 1, 
+norm_natural_params <- function(num_states, num_variables, num_subjects, 
                                 working_params, stationary = TRUE) {
   #' Transform normal HMM parameters from working to natural
   #' 
@@ -840,7 +850,7 @@ norm_natural_params <- function(num_states, num_variables, num_subjects = 1,
   #'   fit with an HMM.
   #' @param working_params A vector of the working normal parameters for the 
   #'   HMM.
-
+  
   mu_start    <- 1
   mu_end      <- num_states*num_variables*num_subjects
   sigma_start <- mu_end + 1
@@ -864,10 +874,11 @@ norm_natural_params <- function(num_states, num_variables, num_subjects = 1,
   for (i in 1:num_subjects) {
     gamma[[i]] <- diag(num_states)
   }
-  if (m == 1) {
+  if (num_states == 1) {
     for (i in 1:num_subjects) {
       delta[[i]] = 1
-    } return(list(mu = mu, sigma = sigma, gamma = gamma, delta = delta))
+    } 
+    return(list(mu = mu, sigma = sigma, gamma = gamma, delta = delta))
   }
   g <- split_vec(working_params, gamma_start, gamma_end, 
                  num_states*(num_states - 1))
@@ -877,20 +888,22 @@ norm_natural_params <- function(num_states, num_variables, num_subjects = 1,
   }
   if (stationary) {
     for (i in 1:num_subjects) {
-      delta[[i]] <- solve(t(diag(num_states) - gamma[[i]] + 1), rep(1, m))
+      delta[[i]] <- solve(t(diag(num_states) - gamma[[i]] + 1), 
+                          rep(1, num_states))
     }
   } else {
     d <- split_vec(working_params, delta_start, delta_end, num_states - 1)
-      for (i in 1:num_subjects) {
-        foo        <- c(1, exp(d[[i]])) 
-        delta[[i]] <- foo/sum(foo)
-      }
-  } list(mu = mu, sigma = sigma, gamma = gamma, delta = delta)
+    for (i in 1:num_subjects) {
+      foo        <- c(1, exp(d[[i]])) 
+      delta[[i]] <- foo/sum(foo)
+    }
+  } 
+  list(mu = mu, sigma = sigma, gamma = gamma, delta = delta)
 }
 
 norm_loglikelihood <- function(working_params, x, 
-                                num_states, num_variables, num_subjects, 
-                                stationary = TRUE) {
+                               num_states, num_variables, num_subjects, 
+                               stationary = TRUE) {
   #' Compute negative log-likelihood of normal HMM parameters
   #' 
   #' This function computes the negative log-likelihood that the given normal 
@@ -900,7 +913,7 @@ norm_loglikelihood <- function(working_params, x,
   #' @param x The data to be fit with an HMM in the form of a 3D array. The 
   #'   first index (row) corresponds to time, the second (column) to the 
   #'   variable number, and the third (matrix number) to the subject number.
-
+  
   num_time  <- nrow(x)
   pn        <- norm_natural_params(num_states, num_variables, num_subjects, 
                                    working_params, stationary = TRUE) 
@@ -932,9 +945,55 @@ norm_loglikelihood <- function(working_params, x,
   - cum_loglikelihood
 }
 
+norm_jacobian <- function(num_states, num_variables, num_subjects, 
+                          working_params, natural_params) {
+  #' Compute modified jacobian of natural parameters with respect to working
+  #' 
+  #' The function computes a modified version of the jacobian of the normal 
+  #' natural HMM parameters with respect ot the normal working HMM parameters.
+  #' The resulting matrix is useful for converting the hessian of the working
+  #' parameters into the hessian of the natural parameters.
+  #' 
+  #' @inheritParams norm_natural_params
+  #' @param natural_params A list of the normal natural HMM parameters `mu`, 
+  #'   `sigma`, `gamma`, and `delta`.
+  
+  n <- num_subjects*(2*num_variables*num_states + num_states*(num_states - 1))
+  l <- num_states^2 - num_states
+  lmu <- num_subjects*num_variables*num_states
+  sigma  <- numeric()
+  for (i in 1:num_subjects) {
+    sigma <- c(sigma, as.vector(t(natural_params$sigma[[i]])))
+  }
+  jacobian <- matrix(0, nrow = n, ncol = n)
+  jacobian[1:lmu, 1:lmu] <- diag(lmu)
+  jacobian[(lmu + 1):(2*lmu), (lmu + 1):(2*lmu)] <- diag(sigma)
+  
+  for (s in 1:num_subjects) {
+    gamma <- natural_params$gamma[[s]]
+    gamma_ordered <- gamma
+    diag(gamma_ordered) <- NA
+    gamma_ordered <- gamma_ordered[which(!is.na(gamma_ordered))]
+    w <- length(gamma_ordered)
+    for (i in 1:length(gamma_ordered)) {
+      for (j in 1:length(gamma_ordered)) {
+        if (i == j) {
+          jacobian[2*lmu + (s - 1)*w + i, 2*lmu + (s - 1)*w + i] <- 
+            gamma_ordered[i]*(1 - gamma_ordered[j])
+        } else if (which(gamma == gamma_ordered[i], arr.ind = TRUE)[1] == 
+                   which(gamma == gamma_ordered[j], arr.ind = TRUE)[1]) {
+          jacobian[2*lmu + (s - 1)*w + i, 2*lmu + (s - 1)*w + j] <- 
+            -gamma_ordered[i]*gamma_ordered[j]
+        }
+      } 
+    }
+  } 
+  jacobian
+}
+
 norm_fit_hmm <- function(x, num_states, num_variables, num_subjects,
                          mu0, sigma0, gamma0, delta0 = NULL, 
-                         stationary = TRUE) {
+                         stationary = TRUE, hessian = FALSE) {
   #' Fit an HMM
   #' 
   #' This function fits data with an HMM by maximizing the likelihood estimate
@@ -957,7 +1016,9 @@ norm_fit_hmm <- function(x, num_states, num_variables, num_subjects,
   #' @param delta0 A list with each element being the starting initial state 
   #'   distribution vector of the HMM for the subject corresponding to that 
   #'   index.
-
+  #' @param hessian A logical variable denoting whether to compute the hessian 
+  #'   at the minimum or not.
+  
   working_params <- norm_working_params(num_states, num_subjects, 
                                         mu0, sigma0, gamma0, delta0, 
                                         stationary = stationary)
@@ -967,24 +1028,58 @@ norm_fit_hmm <- function(x, num_states, num_variables, num_subjects,
              num_states = num_states, 
              num_variables = num_variables, 
              num_subjects = num_subjects, 
-             stationary = stationary) 
+             stationary = stationary,
+             hessian = hessian) 
   
   pn    <- norm_natural_params(num_states = num_states, 
                                num_variables = num_variables, 
                                num_subjects = num_subjects,
                                hmm$estimate, 
                                stationary = TRUE) 
-  list(num_states = num_states, 
-       num_variables = num_variables, 
-       num_subjects = num_subjects, 
-       mu = pn$mu, 
-       sigma = pn$sigma,
-       gamma = pn$gamma, 
-       delta = pn$delta, 
-       code = hmm$code, 
-       max_loglikelihood = hmm$minimum)
+  if (hessian) {
+    h <- hmm$hessian
+    if (det(h) != 0) {
+      h <- solve(h)
+      jacobian <- norm_jacobian(num_states, num_variables, num_subjects, 
+                                hmm$estimate, pn)
+      h <- t(jacobian)%*%h%*%jacobian
+    }
+  }
+  if ((hessian) & (det(hmm$hessian) != 0)) {
+    list(num_states = num_states, 
+         num_variables = num_variables, 
+         num_subjects = num_subjects, 
+         mu = pn$mu, 
+         sigma = pn$sigma,
+         gamma = pn$gamma, 
+         delta = pn$delta, 
+         code = hmm$code, 
+         max_loglikelihood = hmm$minimum,
+         inverse_hessian = h)
+  } else if (hessian) {
+    list(num_states = num_states, 
+         num_variables = num_variables, 
+         num_subjects = num_subjects, 
+         mu = pn$mu, 
+         sigma = pn$sigma,
+         gamma = pn$gamma, 
+         delta = pn$delta, 
+         code = hmm$code, 
+         max_loglikelihood = hmm$minimum,
+         hessian = hmm$hessian, 
+         determinant = det(hmm$hessian))
+  } else {
+    list(num_states = num_states, 
+         num_variables = num_variables, 
+         num_subjects = num_subjects, 
+         mu = pn$mu, 
+         sigma = pn$sigma,
+         gamma = pn$gamma, 
+         delta = pn$delta, 
+         code = hmm$code, 
+         max_loglikelihood = hmm$minimum)
+  }
 }
-
 
 norm_generate_sample <- function(num_sample, hmm) {
   #' Generate data from a normal HMM
@@ -995,7 +1090,7 @@ norm_generate_sample <- function(num_sample, hmm) {
   #' @param hmm A list of parameters that specify the normal HMM, including 
   #'   `num_states`, `num_variables`, `num_subjects`, `mu`, `sigma`, `gamma`,
   #'   `delta`.
-
+  
   state_vec     <- 1:hmm$num_states 
   num_variables <- hmm$num_variables
   num_subjects  <- hmm$num_subjects
@@ -1007,16 +1102,17 @@ norm_generate_sample <- function(num_sample, hmm) {
       state[t, i] <- sample(state_vec, 1, 
                             prob = hmm$gamma[[i]][state[(t-1), i], ])
     }
-  } x <- array(dim = c(num_sample, num_variables, num_subjects))
+  } 
+  x <- array(dim = c(num_sample, num_variables, num_subjects))
   for (j in 1:num_variables) {
     for (i in 1:num_subjects) {
       x[, j, i] <- rnorm(num_sample, 
                          mean = hmm$mu[[j]][i, state[, i]], 
                          sd = hmm$sigma[[j]][i, state[, i]]) 
     }
-  } list(state = state, observ = x)
+  } 
+  list(state = state, observ = x)
 }
-
 
 norm_viterbi <- function(x, hmm) {
   #' Global decoding by the Viterbi algorithm
@@ -1034,7 +1130,7 @@ norm_viterbi <- function(x, hmm) {
   num_subjects  <- hmm$num_subjects
   state_probs   <- list()
   sequence      <- matrix(0, nrow = n, ncol = num_subjects)
-
+  
   for (i in 1:num_subjects) {
     state_probs[[i]] <- matrix(0, nrow = n, ncol = num_states)
     P                <- rep(1, num_states)
@@ -1044,7 +1140,7 @@ norm_viterbi <- function(x, hmm) {
     forward_probs         <- hmm$delta[[i]]*P
     state_probs[[i]][1, ] <- forward_probs/sum(forward_probs)
     
-    for (t in 1:n) {
+    for (t in 2:n) {
       P <- rep(1, num_states)
       for (j in 1:num_variables) {
         P <- P*dnorm(x[t, j, i], hmm$mu[[j]][i, ], hmm$sigma[[j]][i, ])
@@ -1058,9 +1154,8 @@ norm_viterbi <- function(x, hmm) {
                                     state_probs[[i]][t, ])
     }
   }
-  viterbi
+  sequence
 }
-
 
 norm_logforward <- function(x, hmm) {
   #' Compute log forward probabilities
@@ -1069,12 +1164,12 @@ norm_logforward <- function(x, hmm) {
   #' the HMM hmm.
   #' 
   #' @inheritParams norm_viterbi
-
-  n      <- nrow(x) #number of observations
+  
+  n             <- nrow(x) 
   num_states    <- hmm$num_states
   num_variables <- hmm$num_variables
   num_subjects  <- hmm$num_subjects
-  lalpha <- list() #mxn matrix
+  lalpha        <- list() 
   for (i in 1:num_subjects) {
     lalpha[[i]] <- matrix(NA, nrow = num_states, ncol = n)
     P           <- rep(1, num_states)
@@ -1100,12 +1195,104 @@ norm_logforward <- function(x, hmm) {
       forward_probs     <- forward_probs/sum_forward_probs
       lalpha[[i]][, t]  <- loglikelihood + log(forward_probs)
     }
-  } lalpha
+  } 
+  lalpha
 }
 
 
+# norm_forcast_psr <- function(x, hmm) {
+#   n             <- nrow(x)
+#   num_states    <- hmm$num_states
+#   num_variables <- hmm$num_variables
+#   num_subjects  <- hmm$num_subjects
+#   lalpha        <- norm_logforward(x, hmm)
+#   forcast_psr   <- list()
+#   for (i in 1:num_subjects) {
+#     pstepmat         <- matrix(0, n, num_states)
+#     forcast_psr[[i]] <- rep(0, n)
+#     P                <- rep(1, num_variables)
+#     for (j in 1:num_variables) {
+#       ind.step <- which(!is.na(x[, j, i]))
+#       for (k in 1:length(ind.step)){
+#         
+#       }
+#     }}
+# }
 
 
+norm_SE <- function(hmm) {
+  #' Compute standard errors of the fit HMM parameters
+  #' 
+  #' This function computes the standard errors of the fitted HMM parameters
+  #' using the hessian computed from `norm_fit_hmm()`.
+  #' 
+  #' @inheritParams norm_generate_sample
+  
+  num_states    <- hmm$num_states
+  num_variables <- hmm$num_variables
+  num_subjects  <- hmm$num_subjects
+  
+  mu_start    <- 1
+  mu_end      <- num_states*num_variables*num_subjects
+  sigma_start <- mu_end + 1
+  sigma_end   <- mu_end + num_states*num_variables*num_subjects
+  gamma_start <- sigma_end + 1
+  gamma_end   <- sigma_end + num_subjects*num_states^2 - num_subjects*num_states
+  
+  h <- sqrt(diag(hmm$inverse_hessian))
+  mu.SE    <- split_vec(h, mu_start, mu_end, num_states*num_subjects)       
+  sigma.SE <- split_vec(h, sigma_start, sigma_end, num_states*num_subjects)
+  for (j in 1:num_variables) {
+    mu.SE[[j]]    <- matrix(mu.SE[[j]], ncol = num_states, 
+                            nrow = num_subjects, byrow = TRUE)
+    sigma.SE[[j]] <- matrix(sigma.SE[[j]], ncol = num_states, 
+                            nrow = num_subjects, byrow = TRUE)
+  }
+  gamma.SE <- list()
+  g <- split_vec(h, gamma_start, gamma_end, 
+                 num_states*(num_states - 1))
+  for (i in 1:num_subjects) {
+    gamma.SE[[i]] <- diag(num_states)
+    gamma.SE[[i]][!gamma.SE[[i]]] <- g[[i]]
+    diag(gamma.SE[[i]]) <- NA
+  }
+  list(mu = hmm$mu,
+       mu.SE = mu.SE,
+       sigma = hmm$sigma,
+       sigma.SE = sigma.SE,
+       gamma = hmm$gamma,
+       gamma.SE = gamma.SE)
+}
 
-
-
+#Compute CIs of mu and sigma using Monte Carlo approach
+# norm.HMM.CI_MonteCarlo <- function(range, m, n=100, params_SE, level=0.975){
+#   xc = length(range)
+#   mu = params_SE$mu
+#   mu.SE = params_SE$mu.SE
+#   sigma = params_SE$sigma
+#   sigma.SE = params_SE$sigma.SE
+#   
+#   density.lst <- list(matrix(numeric(xc*n), ncol = xc, nrow = n))
+#   
+#   for (k in 1:m){
+#     densities <- matrix(numeric(xc*n), ncol = xc, nrow = n)
+#     for (i in 1:n){
+#       sample.mu <- rnorm(1, mu[k], mu.SE[k])
+#       sample.sigma <- rnorm(1, sigma[k], sigma.SE[k])
+#       densities[i,] <- dnorm(range, sample.mu, sample.sigma)
+#     }
+#     density.lst[[k]] <- densities
+#   }
+#   
+#   upper <- matrix(numeric(xc*m), ncol=xc, nrow=m)
+#   lower <- matrix(numeric(xc*m), ncol=xc, nrow=m)
+#   
+#   for (k in 1:m){
+#     densities <- density.lst[[k]]
+#     for (j in 1:xc){
+#       upper[k,j] <- quantile(densities[,j], probs = level, na.rm= TRUE)
+#       lower[k,j] <- quantile(densities[,j], probs = 1-level, na.rm= TRUE)
+#     }
+#   }
+#   return(list(range=range, upper=upper, lower=lower))
+# }
