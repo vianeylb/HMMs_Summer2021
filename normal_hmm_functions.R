@@ -1,3 +1,8 @@
+library(ggpubr)
+library(ggplot2)
+library(forecast)
+library(gridExtra)
+library(plyr)
 # Single Variable and Single Subject -------------------
 #A.1.1 (modified for normal)
 norm.HMM.pn2pw <- function(m, mu, sigma, gamma, delta=NULL, stationary=TRUE) {
@@ -758,6 +763,7 @@ mvnorm.longitudinal.HMM.generate_sample <- function(ns, mod){
 # Subject = c('Sub1', 'Sub2', 'Sub3')
 # x <- array(dim = c(T, v, s), dimnames = list(Time, Variable, Subject))
 
+# HMM Fitting and Checking ----------------
 norm_working_params <- function(num_states, num_subjects, 
                                 mu, sigma, gamma, delta = NULL, 
                                 stationary = TRUE) {
@@ -1214,13 +1220,13 @@ norm_logforward <- function(x, hmm) {
 #     for (j in 1:num_variables) {
 #       ind.step <- which(!is.na(x[, j, i]))
 #       for (k in 1:length(ind.step)){
-#         
+# 
 #       }
 #     }}
 # }
 
 
-norm_SE <- function(hmm) {
+norm_se <- function(hmm) {
   #' Compute standard errors of the fit HMM parameters
   #' 
   #' This function computes the standard errors of the fitted HMM parameters
@@ -1240,59 +1246,225 @@ norm_SE <- function(hmm) {
   gamma_end   <- sigma_end + num_subjects*num_states^2 - num_subjects*num_states
   
   h <- sqrt(diag(hmm$inverse_hessian))
-  mu.SE    <- split_vec(h, mu_start, mu_end, num_states*num_subjects)       
-  sigma.SE <- split_vec(h, sigma_start, sigma_end, num_states*num_subjects)
+  mu.se    <- split_vec(h, mu_start, mu_end, num_states*num_subjects)       
+  sigma.se <- split_vec(h, sigma_start, sigma_end, num_states*num_subjects)
   for (j in 1:num_variables) {
-    mu.SE[[j]]    <- matrix(mu.SE[[j]], ncol = num_states, 
+    mu.se[[j]]    <- matrix(mu.se[[j]], ncol = num_states, 
                             nrow = num_subjects, byrow = TRUE)
-    sigma.SE[[j]] <- matrix(sigma.SE[[j]], ncol = num_states, 
+    sigma.se[[j]] <- matrix(sigma.se[[j]], ncol = num_states, 
                             nrow = num_subjects, byrow = TRUE)
   }
-  gamma.SE <- list()
+  gamma.se <- list()
   g <- split_vec(h, gamma_start, gamma_end, 
                  num_states*(num_states - 1))
   for (i in 1:num_subjects) {
-    gamma.SE[[i]] <- diag(num_states)
-    gamma.SE[[i]][!gamma.SE[[i]]] <- g[[i]]
-    diag(gamma.SE[[i]]) <- NA
+    gamma.se[[i]] <- diag(num_states)
+    gamma.se[[i]][!gamma.se[[i]]] <- g[[i]]
+    diag(gamma.se[[i]]) <- NA
   }
   list(mu = hmm$mu,
-       mu.SE = mu.SE,
+       mu.se = mu.se,
        sigma = hmm$sigma,
-       sigma.SE = sigma.SE,
+       sigma.se = sigma.se,
        gamma = hmm$gamma,
-       gamma.SE = gamma.SE)
+       gamma.se = gamma.se)
 }
 
-#Compute CIs of mu and sigma using Monte Carlo approach
-# norm.HMM.CI_MonteCarlo <- function(range, m, n=100, params_SE, level=0.975){
-#   xc = length(range)
-#   mu = params_SE$mu
-#   mu.SE = params_SE$mu.SE
-#   sigma = params_SE$sigma
-#   sigma.SE = params_SE$sigma.SE
-#   
-#   density.lst <- list(matrix(numeric(xc*n), ncol = xc, nrow = n))
-#   
-#   for (k in 1:m){
-#     densities <- matrix(numeric(xc*n), ncol = xc, nrow = n)
-#     for (i in 1:n){
-#       sample.mu <- rnorm(1, mu[k], mu.SE[k])
-#       sample.sigma <- rnorm(1, sigma[k], sigma.SE[k])
-#       densities[i,] <- dnorm(range, sample.mu, sample.sigma)
-#     }
-#     density.lst[[k]] <- densities
-#   }
-#   
-#   upper <- matrix(numeric(xc*m), ncol=xc, nrow=m)
-#   lower <- matrix(numeric(xc*m), ncol=xc, nrow=m)
-#   
-#   for (k in 1:m){
-#     densities <- density.lst[[k]]
-#     for (j in 1:xc){
-#       upper[k,j] <- quantile(densities[,j], probs = level, na.rm= TRUE)
-#       lower[k,j] <- quantile(densities[,j], probs = 1-level, na.rm= TRUE)
-#     }
-#   }
-#   return(list(range=range, upper=upper, lower=lower))
-# }
+
+norm_ci <- function(x, num_states, num_variables, num_subjects, params_se, 
+                    x_step = 0.2, n = 100, level= 0.975) {
+  #' Compute the confidence intervals of fitted normal distributions
+  #' 
+  #' This function computes the confidence intervals for the fitted normal state
+  #' dependent distributions using the Monte Carlo approach.
+  #' 
+  #' @inheritParams norm_fit_hmm
+  #' @param params_se A list of normal HMM parameters and thier standard errors
+  #'   the output of `norm_se()`.
+  #' @param x_step A value indicating the step length for the range of 
+  #'   observation values.
+  #' @param n A value indicating the number of samples used in the Monte Carlo
+  #'   estimation of the confidence intervals.
+  #' @param level The value indicating the desired confidence level.
+  #' 
+  conf_intervals <- list()
+  
+  for (i in 1:num_subjects) {
+    conf_intervals[[i]] <- list()
+    for (j in 1:num_variables) {
+      range       <- seq(min(x[, j, i]), max(x[, j, i]), length.out = 100)
+      xc          <- length(range)
+      mu          <- params_se$mu[[j]][i, ]
+      mu.se       <- params_se$mu.se[[j]][i, ]
+      sigma       <- params_se$sigma[[j]][i, ]
+      sigma.se    <- params_se$sigma.se[[j]][i, ]
+      density.lst <- list()
+      for (k in 1:num_states){
+        densities <- matrix(numeric(xc*n), ncol = xc, nrow = n)
+        for (l in 1:n){
+          sample.mu      <- rnorm(1, mu[k], mu.se[k])
+          sample.sigma   <- rnorm(1, sigma[k], sigma.se[k])
+          densities[l, ] <- dnorm(range, sample.mu, sample.sigma)
+        }
+        density.lst[[k]] <- densities
+      }
+      upper <- matrix(numeric(xc*m), ncol=xc, nrow=m)
+      lower <- matrix(numeric(xc*m), ncol=xc, nrow=m)
+      
+      for (k in 1:num_states){
+        densities <- density.lst[[k]]
+        for (t in 1:xc){
+          upper[k, t] <- quantile(densities[, t], probs = level, na.rm= TRUE)
+          lower[k, t] <- quantile(densities[, t], probs = 1 - level, 
+                                  na.rm= TRUE)
+        }
+      }
+      conf_intervals[[i]][[j]] <- list(range = range, 
+                                       upper = upper, 
+                                       lower = lower)
+    }
+  }
+  conf_intervals
+}
+
+
+# HMM Plotting ----------------
+
+#timeseries of observations (works for all types of distributions)
+timeseries <- function(sample, num_subjects, num_variables, length = 300) {
+  states <- sample$state
+  x      <- sample$observ
+  n      <- nrow(x)
+  Var    <- c("Variable 1", "Variable 2", "Variable 3", "Variable 4")
+  Sub    <- c("Subject 1", "Subject 2", "Subject 3", "Subject 4")
+  plots  <- list()
+  for (i in 1:num_subjects) {
+    subvar_data <- data.frame('State' = as.factor(states[1:length, i]))
+    subvar_data$Time  <- 1:length
+    for (j in 1:num_variables) {
+      subvar_data$Observation <- x[1:length, j, i]
+      p <- ggplot(subvar_data, aes(x = Time, y = Observation)) +
+        theme_light() +
+        ggtitle(Sub[i]) +
+        theme(axis.title.x = element_blank(), 
+              plot.title = element_text(hjust = 0.5)) +
+        labs(x = '', y = Var[j]) +
+        geom_point(aes(color = State)) +
+        geom_line(colour = 'grey', alpha = 0.8, lwd = 0.4)
+      plots <- c(plots, list(p))
+    }
+  }
+  plots
+  #ggarrange(plotlist = plots, common.legend = TRUE, legend = "bottom")
+}
+
+#plot histogram of observations with overlayed fit distributions normal
+norm_hist <- function(sample, num_states, num_subjects, num_variables, 
+                      hmm, width = 1, x_step = 0.2) {
+  states <- sample$state
+  x      <- sample$observ
+  n      <- nrow(x)
+  Var    <- c("Variable 1", "Variable 2", "Variable 3", "Variable 4")
+  Sub    <- c("Subject 1", "Subject 2", "Subject 3", "Subject 4")
+  plots  <- list()
+  for (i in 1:num_subjects) {
+    subvar_data <- data.frame('State' = as.factor(states[, i]))
+    for (j in 1:num_variables) {
+      subvar_data$Observation <- x[, j, i]
+      h <- ggplot() + 
+        geom_histogram(data = subvar_data, 
+                       aes(x = Observation), 
+                       binwidth = width,
+                       colour = "cornsilk4",
+                       fill = "white") +
+        theme_bw() +
+        ggtitle(Sub[i]) +
+        theme(panel.grid.major = element_blank(), 
+              panel.grid.minor = element_blank(),
+              plot.title = element_text(hjust = 0.5)) +
+        labs(x = Var[j], y = '')
+      
+      xfit <- seq(min(subvar_data$Observation), max(subvar_data$Observation), 
+                  by = x_step)
+      marginal <- numeric(length(xfit))
+      for (k in 1:num_states) {
+        yfit     <- dnorm(xfit, hmm$mu[[j]][i, k], hmm$sigma[[j]][i, k])
+        yfit     <- yfit*sum(subvar_data$State == k)*width
+        df       <- data.frame('xfit' = xfit, 'yfit' = yfit, 
+                               col = as.factor(rep(k, length(xfit))))
+        h        <- h + geom_line(data = df, aes(xfit, yfit, colour = col), 
+                                  lwd = 0.7)
+        marginal <- marginal + yfit
+      }
+      h     <- h + labs(color = "State")
+      df    <- data.frame('xfit' = xfit, 'yfit' = marginal)
+      h     <- h + geom_line(data = df, aes(xfit, yfit), col="black", lwd=0.7)
+      plots <- c(plots, list(h))
+    }
+  }
+  plots
+  #ggarrange(plotlist = plots, common.legend = TRUE, legend = "bottom")
+}
+
+norm_hist_ci <- function(x, viterbi, conf_intervals, 
+                         num_states, num_subjects, num_variables, 
+                         hmm, width = 1, x_step = 0.2) {
+  n      <- nrow(x)
+  Var <- c("Variable 1", "Variable 2", "Variable 3", "Variable 4")
+  Sub    <- c("Subject 1", "Subject 2", "Subject 3", "Subject 4")
+  plots  <- list()
+  for (i in 1:num_subjects) {
+    subvar_data <- data.frame('State' = as.factor(viterbi[, i]))
+    for (j in 1:num_variables) {
+      subvar_data$Observation <- x[, j, i]
+      h <- ggplot() + 
+        geom_histogram(data = subvar_data, 
+                       aes(x = Observation), 
+                       binwidth = width,
+                       colour = "cornsilk4",
+                       fill = "white") +
+        theme_bw() +
+        ggtitle(Sub[i]) +
+        theme(panel.grid.major = element_blank(), 
+              panel.grid.minor = element_blank(),
+              plot.title = element_text(hjust = 0.5)) +
+        labs(x = Var[j], y = '')
+      
+      xfit <- seq(min(subvar_data$Observation), max(subvar_data$Observation), 
+                  by = x_step)
+      marginal <- numeric(length(xfit))
+      for (k in 1:num_states) {
+        yfit     <- dnorm(xfit, hmm$mu[[j]][i, k], hmm$sigma[[j]][i, k])
+        yfit     <- yfit * sum(subvar_data$State == k) * width
+        df       <- data.frame('xfit' = xfit, 'yfit' = yfit, 
+                               col = as.factor(rep(k, length(xfit))))
+        h        <- h + geom_line(data = df, aes(xfit, yfit, colour = col), 
+                                  lwd = 0.7)
+        marginal <- marginal + yfit
+      }
+      h  <- h + labs(color = "State")
+      df <- data.frame('xfit' = xfit, 'yfit' = marginal)
+      h  <- h + geom_line(data=df,aes(xfit, yfit), col="black", lwd=0.7)
+      
+      for (k in 1:num_states){
+        upper <- conf_intervals[[i]][[j]]$upper[k, ]*
+          sum(subvar_data$State == k)*width
+        lower <- conf_intervals[[i]][[j]]$lower[k, ]*
+          sum(subvar_data$State == k)*width
+        df <- data.frame('x' = conf_intervals[[i]][[j]]$range, 
+                         'upper' = upper, 'lower' = lower)
+        h <- h + geom_ribbon(data = df, aes(x = x, ymin = lower, ymax = upper),
+                             fill = (k + 1), alpha = 0.4)
+      }
+      plots <- c(plots, list(h))
+    }
+  }
+  plots
+  # ggarrange(plotlist = plots, common.legend = TRUE, legend = "bottom", 
+  #           labels = c("Subject 1", 
+  #                      "Subject 1", 
+  #                      "Subject 2",
+  #                      "Subject 2"))
+}
+
+
