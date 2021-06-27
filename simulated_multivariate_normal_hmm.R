@@ -36,7 +36,7 @@ mvnorm_mle <- mvnorm_hmm_mle(mvnorm_sample$obs, m, k,
                              stationary = FALSE, hessian = TRUE)
 mvnorm_mle
 mvnorm_decoding <- mvnorm_hmm_viterbi(mvnorm_sample$obs, mvnorm_mle)
-count(mvnorm_decoding$states)
+count(mvnorm_decoding$state)
 
 # Get psuedo-residuals
 mvnorm_pr <- mvnorm_hmm_pseudo_residuals(mvnorm_sample$obs,
