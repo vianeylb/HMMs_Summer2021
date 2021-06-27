@@ -8,22 +8,39 @@ library(gridExtra)
 #q: order of autoregressive model
 #phi: autoregressive model parameters, as list of vectors
 
+# Get mean for given x in autoregressive series
+# phi is a qxq matrix 
+# i is the time index
+get_ar_mean <- function(mu, phi, x, q, i){
+  if (i == 1) {
+    mean <- mu
+  }
+  else if (i <= q){
+    phi <- phi[, 1:(i - 1)]
+    x_lag <-  x[(i - 1):1]
+    if (i == 2)
+      mean <- mu + phi * x_lag
+    else{
+      mean <- mu + as.vector(phi %*% x_lag)
+    }
+  } 
+  else {
+    x_lag <- x[(i - 1):(i - q)]
+    mean <- mu + as.vector(phi %*% x_lag)
+  }
+  return(mean)
+}
+
 ar_hmm_generate_sample <- function(ns, mod) {
   mvect <- 1:mod$m
   state <- numeric(ns)
   state[1] <- sample(mvect, 1, prob = mod$delta)
   for (i in 2:ns) state[i] <- sample(mvect, 1, prob = mod$gamma[state[i - 1], ])
-  q <- mod$q
   x <- numeric(ns)
-  x[1] <- rnorm(1, mean = mod$mu[state[1]], sd = mod$sigma[state[1]])
-  for (i in 2:q){
-    phi <- mod$phi[[state[i]]][1:(i-1)]
-    mean <- mod$mu[state[i]] + phi%*%x[(i-1):1]
-    x[i] <- rnorm(1, mean = mean, sd = mod$sigma[state[i]])
-  }
-  for (i in (q + 1):ns){
-    mean <- mod$mu[state[i]]+ mod$phi[[state[i]]]%*%x[(i - 1):(i - q)]
-    x[i] <- rnorm(1, mean = mean, sd = mod$sigma[state[i]])
+  phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow = mod$q, byrow = TRUE)
+  for (i in 1:ns){
+    mean <- get_ar_mean(mod$mu, phi, x, mod$q, i)
+    x[i] <- rnorm(1, mean = mean[state[i]], sd = mod$sigma[state[i]])
   }
   return(data_frame(index = c(1:ns), state = state, obs = x))
 }
@@ -76,32 +93,21 @@ ar_hmm_mllk <- function(parvect, x, m, q, stationary = TRUE, ...) {
   lscale <- log(sumfoo)
   foo <- foo / sumfoo
   
-  phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow=q, byrow=TRUE)
-  for (i in 2:q){
-    phi2 <- phi[, 1:(i - 1)]
-    x_lag <-  x[(i - 1):1]
-    if (i == 2){
-      mean <- mod$mu + phi2 * x_lag
+  phi <- matrix(unlist(pn$phi, use.names = FALSE), nrow=q, byrow=TRUE)
+  for (i in 2:n) {
+    if (!is.na(x[i])) {
+      mean <- get_ar_mean(pn$mu, phi, x, q, i)
+      p <- dnorm(x[i], mean, pn$sigma)
     }
     else {
-      mean <- mod$mu + as.vector(phi2 %*% x_lag)
+      p <- rep(1, m)
     }
-    p <- dnorm(x[i], mean = mean, sd = mod$sigma)
     foo <- foo %*% pn$gamma * p
     sumfoo <- sum(foo)
     lscale <- lscale + log(sumfoo)
     foo <- foo / sumfoo
   }
-
-  for (i in (q + 1):n) {
-    x_lag <- x[(i - 1):(i - q)]
-    mean <- mod$mu + as.vector(phi%*%x_lag)
-    p <- dnorm(x[i], mean = mean, sd = mod$sigma)
-    foo <- foo %*% pn$gamma * p
-    sumfoo <- sum(foo)
-    lscale <- lscale + log(sumfoo)
-    foo <- foo / sumfoo
-  }
+  
   mllk <- -lscale
   return(mllk)
 }
@@ -123,10 +129,43 @@ ar_hmm_mle <- function(x, m, q, mu0, sigma0, gamma0, phi0,
   n <- sum(!is.na(x))
   bic <- 2 * mllk + np * log(n)
   
-  return(list(
-    m = m, q = q, mu = pn$mu, sigma = pn$sigma, gamma = pn$gamma, phi = pn$phi, delta = pn$delta,
-    code = mod$code, mllk = mllk, aic = aic, bic = bic)
-  )
+  if (hessian) {
+    if (!stationary) {
+      np2 <- np - m + 1
+      h <- mod$hessian[1:np2, 1:np2]
+    }
+    else {
+      np2 <- np
+      h <- mod$hessian
+    }
+    if (det(h) != 0) {
+      h <- solve(h)
+      jacobian <- ar_jacobian(m, q, np2, mod$estimate, 
+                                stationary = stationary)
+      h <- t(jacobian) %*% h %*% jacobian
+      return(list(
+        m = m, q = q, mu = pn$mu, sigma = pn$sigma,
+        gamma = pn$gamma, delta = pn$delta, phi = pn$phi,
+        code = mod$code, mllk = mllk,
+        aic = aic, bic = bic, invhessian = h
+      ))
+    }
+    else {
+      return(list(
+        m = m, q = q, mu = pn$mu, sigma = pn$sigma,
+        gamma = pn$gamma, delta = pn$delta, phi = pn$phi,
+        code = mod$code, mllk = mllk,
+        aic = aic, bic = bic, hessian = mod$hessian
+      ))
+    }
+  }
+  else {
+    return(list(
+      m = m, q = q, mu = pn$mu, sigma = pn$sigma,
+      gamma = pn$gamma, delta = pn$delta, phi = pn$phi,
+      code = mod$code, mllk = mllk, aic = aic, bic = bic
+    ))
+  }
 }
 
 ar_hmm_viterbi <- function(x, mod) {
@@ -135,39 +174,21 @@ ar_hmm_viterbi <- function(x, mod) {
   foo <- mod$delta * dnorm(x[1], mod$mu, mod$sigma)
   xi[1, ] <- foo / sum(foo)
   
-  q <- mod$q
-  phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow = q, byrow = TRUE)
-  for (t in 2:q){
-    phi2 <- phi[, 1:(t - 1)]
-    x_lag <-  x[(t - 1):1]
-    if (t == 2){
-      mean <- mod$mu + phi2 * x_lag
-    }
-    else {
-      mean <- mod$mu + as.vector(phi2 %*% x_lag)
-    }
+  phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow = mod$q, byrow = TRUE)
+  for (t in 2:n) {
+    mean <- get_ar_mean(mod$mu, phi, x, mod$q, t)
     p <- dnorm(x[t], mean = mean, sd = mod$sigma)
-    foo <- apply(xi[t - 1, ] * mod$gamma, 2, max) * p
+    foo <- apply(xi[t - 1, ] * mod$gamma, 2, max) * p 
     xi[t, ] <- foo / sum(foo)
   }
-  
-  for (t in (q + 1):n) {
-    x_lag <- x[(t - 1):(t - q)]
-    mean <- mod$mu + as.vector(phi%*%x_lag)
-    p <- dnorm(x[t], mean = mean, sd = mod$sigma)
-    foo <- apply(xi[t - 1, ] * mod$gamma, 2, max) * p
-    xi[t, ] <- foo / sum(foo)
-  }
-  
   
   iv <- numeric(n)
   iv[n] <- which.max(xi[n, ])
   for (t in (n - 1):1) {
     iv[t] <- which.max(mod$gamma[, iv[t + 1]] * xi[t, ])
   }
-  return(data_frame(index = 1:n, states = iv))
+  return(data_frame(index = 1:n, state = iv))
 }
-
 
 ar_hmm_lforward <- function(x, mod) {
   n <- length(x)
@@ -178,28 +199,9 @@ ar_hmm_lforward <- function(x, mod) {
   foo <- foo / sumfoo
   lalpha[, 1] <- lscale + log(foo)
   
-  q <- mod$q
-  phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow=q, byrow=TRUE)
-  for (i in 2:q){
-    phi2 <- phi[, 1:(i - 1)]
-    x_lag <-  x[(i - 1):1]
-    if (i == 2){
-      mean <- mod$mu + phi2 * x_lag
-    }
-    else {
-      mean <- mod$mu + as.vector(phi2 %*% x_lag)
-    }
-    p <- dnorm(x[i], mean = mean, sd = mod$sigma)
-    foo <- foo %*% mod$gamma * p
-    sumfoo <- sum(foo)
-    lscale <- lscale + log(sumfoo)
-    foo <- foo / sumfoo
-    lalpha[, i] <- log(foo) + lscale
-  }
-  
-  for (i in (q + 1):n) {
-    x_lag <- x[(i - 1):(i - q)]
-    mean <- mod$mu + as.vector(phi %*% x_lag)
+  phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow = mod$q, byrow = TRUE)
+  for (i in 2:n) {
+    mean <- get_ar_mean (mod$mu, phi, x, mod$q, i)
     p <- dnorm(x[i], mean = mean, sd = mod$sigma)
     foo <- foo %*% mod$gamma * p
     sumfoo <- sum(foo)
@@ -219,35 +221,17 @@ ar_hmm_lbackward <- function(x, mod) {
   foo <- rep(1 / m, m)
   lscale <- log(m)
   
-  q <- mod$q
-  phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow=q, byrow=TRUE)
-  for (i in (n - 1):q) {
-    x_lag <- x[i:(i - q + 1)]
-    mean <- mod$mu + as.vector(phi %*% x_lag)
+  phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow = mod$q, byrow = TRUE)
+  for (i in (n - 1):1) {
+    mean <- get_ar_mean (mod$mu, phi, x, mod$q, i + 1)
     p <- dnorm(x[i + 1], mean = mean, sd = mod$sigma)
-    foo <- mod$gamma %*% p * foo
+    foo <- mod$gamma %*% (p * foo)
     lbeta[, i] <- log(foo) + lscale
     sumfoo <- sum(foo)
     foo <- foo / sumfoo
     lscale <- lscale + log(sumfoo)
   }
-  
-  for (i in (q - 1):1){
-    phi2 <- phi[, 1:i]
-    x_lag <-  x[i:1]
-    if (i == 1){
-      mean <- mod$mu + phi2 * x_lag
-    }
-    else {
-      mean <- mod$mu + as.vector(phi2 %*% x_lag)
-    }
-    p <- dnorm(x[i + 1], mean = mean, sd = mod$sigma)
-    foo <- mod$gamma %*% p * foo
-    lbeta[, i] <- log(foo) + lscale
-    sumfoo <- sum(foo)
-    foo <- foo / sumfoo
-    lscale <- lscale + log(sumfoo)
-  }
+
   return(lbeta)
 }
 
@@ -265,27 +249,13 @@ ar_hmm_pseudo_residuals <- function(x, mod, type, stationary) {
     lafact <- apply(la, 2, max)
     lbfact <- apply(lb, 2, max)
     
-    q <- mod$q
-    phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow=q, byrow=TRUE)
+    phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow = mod$q, byrow = TRUE)
     p <- matrix(NA, n, mod$m)
-    p[1, ] <- pnorm(x[1], mean = mod$mu, sd = mod$sigma)
-    for (i in 2:q){
-      phi2 <- phi[, 1:(i - 1)]
-      x_lag <-  x[(i - 1):1]
-      if (i == 2){
-        mean <- mod$mu + phi2 * x_lag
-      }
-      else {
-        mean <- mod$mu + as.vector(phi2 %*% x_lag)
-      }
+    for (i in 1:n) {
+      mean <- get_ar_mean (mod$mu, phi, x, mod$q, i)
       p[i, ] <- pnorm(x[i], mean = mean, sd = mod$sigma)
     }
-    for (i in (q + 1):n) {
-      x_lag <- x[(i - 1):(i - q)]
-      mean <- mod$mu + as.vector(phi %*% x_lag)
-      p[i, ] <- pnorm(x[i], mean = mean, sd = mod$sigma)
-    }
-    
+
     npsr <- rep(NA, n)
     npsr[1] <- qnorm(delta %*% p[1, ])
     for (i in 2:n) {
@@ -302,24 +272,10 @@ ar_hmm_pseudo_residuals <- function(x, mod, type, stationary) {
     n <- length(x)
     la <- ar_hmm_lforward(x, mod)
     
-    q <- mod$q
-    phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow=q, byrow=TRUE)
+    phi <- matrix(unlist(mod$phi, use.names = FALSE), nrow = mod$q, byrow = TRUE)
     p <- matrix(NA, n, mod$m)
-    p[1, ] <- pnorm(x[1], mean = mod$mu, sd = mod$sigma)
-    for (i in 2:q){
-      phi2 <- phi[, 1:(i - 1)]
-      x_lag <-  x[(i - 1):1]
-      if (i == 2){
-        mean <- mod$mu + phi2 * x_lag
-      }
-      else {
-        mean <- mod$mu + as.vector(phi2 %*% x_lag)
-      }
-      p[i, ] <- pnorm(x[i], mean = mean, sd = mod$sigma)
-    }
-    for (i in (q + 1):n) {
-      x_lag <- x[(i - 1):(i - q)]
-      mean <- mod$mu + as.vector(phi %*% x_lag)
+    for (i in 1:n) {
+      mean <- get_ar_mean (mod$mu, phi, x, mod$q, i)
       p[i, ] <- pnorm(x[i], mean = mean, sd = mod$sigma)
     }
     
@@ -335,70 +291,125 @@ ar_hmm_pseudo_residuals <- function(x, mod, type, stationary) {
   }
 }
 
+ar_jacobian <- function(m, q, n, parvect, stationary = TRUE) {
+  pn <- ar_hmm_pw2pn(m, q, parvect, stationary)
+  jacobian <- matrix(0, nrow = n, ncol = n)
+  jacobian[1:m, 1:m] <- diag(m)
+  jacobian[(m + 1):(2 * m), (m + 1):(2 * m)] <- diag(pn$sigma)
+  count <- 0
+  for (i in 1:m) {
+    for (j in 1:m) {
+      if (j != i) {
+        count <- count + 1
+        foo <- -pn$gamma[i, j] * pn$gamma[i, ]
+        foo[j] <- pn$gamma[i, j] * (1 - pn$gamma[i, j])
+        foo <- foo[-i]
+        jacobian[2 * m + count,
+                 (2 * m + (i - 1) * (m - 1) + 1):(2 * m + i * (m - 1))] <- foo
+      }
+    }
+  }
+  count <- 2 * m + count + 1
+  phi <- unlist(pn$phi, use.names = FALSE)
+  jacobian[count:n, count:n] <- diag(phi)
+  return(jacobian)
+}
 
-m <- 3
-mu <- c(2, 5, 8)
-sigma <- c(2, 4, 6)
-gamma <- matrix(c(
-  0.1, 0.2, 0.7,
-  0.3, 0.4, 0.3,
-  0.6, 0.3, 0.1
-), nrow = m, byrow = TRUE)
-delta <- c(0.4, 0.2, 0.4)
-q <- 3
-phi <- list(c(0.5, 0.3, 0.1),
-            c(0.4, 0.2, 0.1),
-            c(0.1, 0.1, 0.1))
-mod <- list(m = m, mu = mu, sigma = sigma, gamma = gamma, phi = phi, delta = delta, q = q)
-ar_sample <- ar_hmm_generate_sample(1000, mod)
-# Plots 
-graph_hmm_output(ar_sample)
-graph_hmm_hist(ar_sample)
-ggacf(ar_sample$obs) +
-  theme_minimal()
-ggpacf(ar_sample$obs) +
-  theme_minimal()
-# Get MLE
-mu0 <- c(5, 5, 5)
-sigma0 <- c(5, 5, 5)
-gamma0 <- matrix(rep(1 / m, m * m), nrow = m, byrow = TRUE)
-delta0 <- rep(1 / m, m)
-phi0 <- list(rep(0.3, 3),
-             rep(0.3, 3),
-             rep(0.3, 3))
-ar_mle <- ar_hmm_mle(ar_sample$obs, m, q, mu0, sigma0, gamma0, phi0,
-                         delta0, stationary = TRUE, hessian = TRUE)
-ar_mle
-ar_decoding <- ar_hmm_viterbi(ar_sample$obs, ar_mle)
-ar_decoding
-count(ar_decoding$states)
-count(ar_decoding$states - ar_sample$state)
-# Get pseudo-residuals
-ar_pr <- ar_hmm_pseudo_residuals(ar_sample$obs, ar_mle,
-                                     "forecast", stationary = FALSE)
-# Index plot of pseudo-residuals
-ggplot(ar_pr) +
-  geom_point(aes(x = index, y = npsr), size = 0.5, colour = "black") +
-  theme_minimal()
-# Histogram of pseudo-residuals
-ggplot(ar_pr, aes(npsr)) +
-  geom_histogram(aes(y = ..density..), colour = "navy", fill = "light blue") +
-  stat_function(fun = dnorm, colour = "red") +
-  theme_minimal()
-# QQ plot of pseudo-residuals
-ggplot(ar_pr, aes(sample = npsr)) +
-  stat_qq() +
-  stat_qq_line() +
-  theme_minimal()
-# ACF of pseudo-residuals
-ggacf(ar_pr$npsr) +
-  theme_minimal()
+ar_bootstrap_estimates <- function(mod, n, len, stationary) {
+  m <- mod$m
+  q <- mod$q
+  mu_estimate <- numeric(n * m)
+  sigma_estimate <- numeric(n * m)
+  gamma_estimate <- numeric(n * m * m)
+  delta_estimate <- numeric(n * m)
+  phi_estimate <- numeric(n * m * q)
+  for (i in 1:n) {
+    sample <- ar_hmm_generate_sample(len, mod)
+    mod2 <- ar_hmm_mle(sample$obs, m, q, mod$mu, mod$sigma, mod$gamma, mod$phi,
+                         mod$delta, stationary = stationary, hessian = FALSE)
+    mu_estimate[((i - 1) * m + 1):(i * m)] <- mod2$mu
+    sigma_estimate[((i - 1) * m + 1):(i * m)] <- mod2$sigma
+    gamma_estimate[((i - 1) * m * m + 1):(i * m * m)] <- mod2$gamma
+    phi_estimate[((i - 1) * m * q + 1):(i * m * q)] <- 
+      unlist(mod2$phi, use.names = FALSE)
+    delta_estimate[((i - 1) * m + 1):(i * m)] <- mod2$delta
+  }
+  return(list(mu = mu_estimate,
+              sigma = sigma_estimate,
+              gamma = gamma_estimate, 
+              phi = phi_estimate,
+              delta = delta_estimate))
+}
 
-parvect <- ar_hmm_pn2pw(m, mu, sigma, gamma, phi,
-                        delta, stationary = FALSE)
-parvect
-pn <- ar_hmm_pw2pn(m, q, parvect, stationary = FALSE)
-pn
-ar_hmm_mllk(parvect, ar_sample$obs, m, q, stationary = FALSE)
-ar_hmm_lforward(ar_sample$obs, ar_mle)
-ar_hmm_lbackward(ar_sample$obs, ar_mle)
+ar_bootstrap_ci <- function(mod, bootstrap, alpha) {
+  m <- mod$m
+  mu_lower <- rep(NA, m)
+  mu_upper <- rep(NA, m)
+  sigma_lower <- rep(NA, m)
+  sigma_upper <- rep(NA, m)
+  gamma_lower <- rep(NA, m * m)
+  gamma_upper <- rep(NA, m * m)
+  phi_lower <- rep(NA, m * q)
+  phi_upper <- rep(NA, m * q)
+  delta_lower <- rep(NA, m)
+  delta_upper <- rep(NA, m)
+  bootstrap1 <- data_frame(mu = bootstrap$mu,
+                           sigma = bootstrap$sigma,
+                           delta = bootstrap$delta)
+  bootstrap2 <- data_frame(gamma = bootstrap$gamma)
+  bootstrap3 <- data_frame(phi = bootstrap$phi)
+  for (i in 1:m) {
+    if (i == m) {
+      foo <- bootstrap1 %>% filter((row_number() %% m) == 0)
+    }
+    else {
+      foo <- bootstrap1 %>% filter((row_number() %% m) == i)
+    }
+    mu_lower[i] <- 2 * mod$mu[i] -
+      quantile(foo$mu, 1 - (alpha / 2), names = FALSE)
+    mu_upper[i] <- 2 * mod$mu[i] -
+      quantile(foo$mu, alpha / 2, names = FALSE)
+    sigma_lower[i] <- 2 * mod$sigma[i] -
+      quantile(foo$sigma, 1 - (alpha / 2), names = FALSE)
+    sigma_upper[i] <- 2 * mod$sigma[i] -
+      quantile(foo$sigma, alpha / 2, names = FALSE)
+    delta_lower[i] <- 2 * mod$delta[i] -
+      quantile(foo$delta, 1 - (alpha / 2), names = FALSE)
+    delta_upper[i] <- 2 * mod$delta[i] -
+      quantile(foo$delta, alpha / 2, names = FALSE)
+  }
+  phi <- unlist(mod$phi, use.names = FALSE)
+  for (i in 1:(m * m)) {
+    if (i == (m * m)) {
+      foo <- bootstrap2 %>% filter((row_number() %% (m * m)) == 0)
+    }
+    else {
+      foo <- bootstrap2 %>% filter((row_number() %% (m * m)) == i)
+    }
+    
+    gamma_lower[i] <- 2 * mod$gamma[i] -
+      quantile(foo$gamma, 1 - (alpha / 2), names = FALSE)
+    gamma_upper[i] <- 2 * mod$gamma[i] -
+      quantile(foo$gamma, alpha / 2, names = FALSE)
+  }
+  for (i in 1:(m * q)) {
+    if (i == (m * q)) {
+      foo <- bootstrap3 %>% filter((row_number() %% (m * q)) == 0)
+    }
+    else {
+      foo <- bootstrap3 %>% filter((row_number() %% (m * q)) == i)
+    }
+    
+    phi_lower[i] <- 2 * phi[i] -
+      quantile(foo$phi, 1 - (alpha / 2), names = FALSE)
+    phi_upper[i] <- 2 * phi[i] -
+      quantile(foo$phi, alpha / 2, names = FALSE)
+  }
+  return(list(
+    mu_lower = mu_lower, mu_upper = mu_upper,
+    sigma_lower = sigma_lower, sigma_upper = sigma_upper,
+    gamma_lower = gamma_lower, gamma_upper = gamma_upper,
+    phi_lower = phi_lower, phi_upper = phi_upper,
+    delta_lower = delta_lower, delta_upper = delta_upper
+  ))
+}
