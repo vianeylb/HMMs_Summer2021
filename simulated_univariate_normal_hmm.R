@@ -35,7 +35,7 @@ norm_mle <- norm_hmm_mle(norm_sample$obs, m, mu0, sigma0, gamma0,
 norm_mle
 # Decode states
 norm_decoding <- norm_hmm_viterbi(norm_sample$obs, norm_mle)
-count(norm_decoding$states - norm_sample$state)
+count(norm_decoding$state - norm_sample$state)
 # Get marginal distribution
 start <- min(norm_sample$obs)
 end <- max(norm_sample$obs)
