@@ -753,7 +753,7 @@ mvnorm.longitudinal.HMM.generate_sample <- function(ns, mod){
 }
 
 
-# GENERAL NORMAL! ------------------------
+# HMM Multivaraite, Multisubject, pooling ------------------------
 # example observation data for mvnorm multiple subjects (3D array)
 # T=10
 # v=2
@@ -763,10 +763,9 @@ mvnorm.longitudinal.HMM.generate_sample <- function(ns, mod){
 # Subject = c('Sub1', 'Sub2', 'Sub3')
 # x <- array(dim = c(T, v, s), dimnames = list(Time, Variable, Subject))
 
-# HMM Fitting and Checking ----------------
 norm_working_params <- function(num_states, num_subjects, 
                                 mu, sigma, gamma, delta = NULL, 
-                                stationary = TRUE) {
+                                stationary = TRUE, gamma_pooled = FALSE) {
   #' Transform normal HMM parameters from natural to working
   #' 
   #' This function transforms the natural normal HMM parameters that have 
@@ -793,26 +792,34 @@ norm_working_params <- function(num_states, num_subjects,
   #'   vector of the HMM for the subject corresponding to that index.
   #' @param stationary A logical variable denoting whether to treat the HMM as 
   #'   one with a stationary distribution or without.
+  #' @param gamma_pooled A logical variable indiacting whether the transition
+  #'   probability matrix `gamma` and the resulting stationary distribution 
+  #'   `delta` should be the same for all subjects.
   
+  if (gamma_pooled) {
+    ng <- 1
+  } else {
+    ng <- num_subjects
+  }
   tmu     <- numeric()
   tsigma  <- numeric()
-  for (i in 1:num_subjects) {
-    tmu    <- c(tmu, as.vector(t(mu[[i]]))) 
-    tsigma <- c(tsigma, log(as.vector(t(sigma[[i]]))))
+  for (j in 1:num_variables) {
+    tmu    <- c(tmu, as.vector(t(mu[[j]]))) 
+    tsigma <- c(tsigma, log(as.vector(t(sigma[[j]]))))
   }
-  if(num_states == 1) {
+  if (num_states == 1) {
     return(tmu, tsigma)
   }
   tgamma   <- numeric()
-  for (i in 1:num_subjects) {
-    foo    <- log(gamma[[i]]/diag(gamma[[i]])) 
-    tgamma <- c(tgamma, as.vector(foo[!diag(num_states)]))
+  for (i in 1:ng) {
+      foo    <- log(gamma[[i]]/diag(gamma[[i]])) 
+      tgamma <- c(tgamma, as.vector(foo[!diag(num_states)]))
   }
-  if(stationary) {
+  if (stationary) {
     tdelta <- NULL
   } else {
     tdelta <- numeric()
-    for (i in 1:num_subjects) {
+    for (i in 1:ng) {
       tdelta <- c(tdelta, log(delta[[i]][-1]/delta[[i]][1]))
     }
   } 
@@ -844,7 +851,9 @@ split_vec <- function(vector, start, end, length, exp = FALSE) {
 }
 
 norm_natural_params <- function(num_states, num_variables, num_subjects, 
-                                working_params, stationary = TRUE) {
+                                working_params, stationary = TRUE,
+                                state_dep_dist_pooled = FALSE,
+                                gamma_pooled = FALSE) {
   #' Transform normal HMM parameters from working to natural
   #' 
   #' This function transforms the working normal HMM parameters back into the 
@@ -856,50 +865,62 @@ norm_natural_params <- function(num_states, num_variables, num_subjects,
   #'   fit with an HMM.
   #' @param working_params A vector of the working normal parameters for the 
   #'   HMM.
+  #' @param state_dep_dist_pooled A logical variable indiacting whether the
+  #'   state dependent distribution parameters `mu` and `sigma` should be 
+  #'   treated as equal for all subjects.
   
+  ns          <- num_subjects
   mu_start    <- 1
   mu_end      <- num_states*num_variables*num_subjects
-  sigma_start <- mu_end + 1
   sigma_end   <- mu_end + num_states*num_variables*num_subjects
+  mu_len      <- sigma_len <- num_subjects*num_states
+  if (state_dep_dist_pooled) {
+    mu_end    <- num_states*num_variables
+    sigma_end <- mu_end + num_states*num_variables
+    mu_len    <- sigma_len <- num_states
+  }
+  sigma_start <- mu_end + 1
   gamma_start <- sigma_end + 1
   gamma_end   <- sigma_end + num_subjects*num_states^2 - num_subjects*num_states
+  if (gamma_pooled) {
+    gamma_end <- sigma_end + num_states^2 - num_states
+    ns        <- 1
+  }
   delta_start <- gamma_end + 1
   delta_end   <- length(working_params)
   
-  mu    <- split_vec(working_params, mu_start, mu_end, num_states*num_subjects)       
-  sigma <- split_vec(working_params, sigma_start, sigma_end, 
-                     num_states*num_subjects, exp = TRUE)
+  mu    <- split_vec(working_params, mu_start, mu_end, mu_len)       
+  sigma <- split_vec(working_params, sigma_start, sigma_end, sigma_len, 
+                     exp = TRUE)
   for (j in 1:num_variables) {
-    mu[[j]]    <- matrix(mu[[j]], ncol = num_states, nrow = num_subjects, 
-                         byrow = TRUE)
-    sigma[[j]] <- matrix(sigma[[j]], ncol = num_states, nrow = num_subjects,
-                         byrow = TRUE)
+    mu[[j]]    <- matrix(mu[[j]], ncol = num_states, byrow = TRUE)
+    sigma[[j]] <- matrix(sigma[[j]], ncol = num_states, byrow = TRUE)
   }
   gamma <- list()
   delta <- list()
-  for (i in 1:num_subjects) {
+  for (i in 1:ns) {
     gamma[[i]] <- diag(num_states)
   }
   if (num_states == 1) {
-    for (i in 1:num_subjects) {
+    for (i in 1:ns) {
       delta[[i]] = 1
     } 
     return(list(mu = mu, sigma = sigma, gamma = gamma, delta = delta))
   }
   g <- split_vec(working_params, gamma_start, gamma_end, 
                  num_states*(num_states - 1))
-  for (i in 1:num_subjects) {
+  for (i in 1:ns) {
     gamma[[i]][!gamma[[i]]] <- exp(g[[i]]) 
     gamma[[i]]              <- gamma[[i]]/apply(gamma[[i]], 1, sum) 
   }
   if (stationary) {
-    for (i in 1:num_subjects) {
+    for (i in 1:ns) {
       delta[[i]] <- solve(t(diag(num_states) - gamma[[i]] + 1), 
                           rep(1, num_states))
     }
   } else {
     d <- split_vec(working_params, delta_start, delta_end, num_states - 1)
-    for (i in 1:num_subjects) {
+    for (i in 1:ns) {
       foo        <- c(1, exp(d[[i]])) 
       delta[[i]] <- foo/sum(foo)
     }
@@ -909,7 +930,9 @@ norm_natural_params <- function(num_states, num_variables, num_subjects,
 
 norm_loglikelihood <- function(working_params, x, 
                                num_states, num_variables, num_subjects, 
-                               stationary = TRUE) {
+                               stationary = TRUE, 
+                               state_dep_dist_pooled = FALSE,
+                               gamma_pooled = FALSE) {
   #' Compute negative log-likelihood of normal HMM parameters
   #' 
   #' This function computes the negative log-likelihood that the given normal 
@@ -925,11 +948,19 @@ norm_loglikelihood <- function(working_params, x,
                                    working_params, stationary = TRUE) 
   cum_loglikelihood <- 0
   for (i in 1:num_subjects) {
+    s_ind   <- i
+    g_ind   <- i
+    if (state_dep_dist_pooled) {
+      s_ind <- 1
+    }
+    if (gamma_pooled) {
+      g_ind <- 1
+    }
     P   <- rep(1, num_states)
     for (j in 1:num_variables) {
-      P <- P*dnorm(x[1, j, i], pn$mu[[j]][i, ], pn$sigma[[j]][i, ])
+      P <- P*dnorm(x[1, j, i], pn$mu[[j]][s_ind, ], pn$sigma[[j]][s_ind, ])
     }
-    forward_probs     <- pn$delta[[i]]*P
+    forward_probs     <- pn$delta[[g_ind]]*P
     sum_forward_probs <- sum(forward_probs) 
     loglikelihood     <- log(sum_forward_probs)
     forward_probs     <- forward_probs/sum_forward_probs
@@ -938,10 +969,10 @@ norm_loglikelihood <- function(working_params, x,
       P     <- rep(1, num_states)
       for (j in 1:num_variables) {
         if (!is.na(x[t, j, i])) {
-          P <- P*dnorm(x[t, j, i], pn$mu[[j]][i, ], pn$sigma[[j]][i, ])
+          P <- P*dnorm(x[t, j, i], pn$mu[[j]][s_ind, ], pn$sigma[[j]][s_ind, ])
         }
       }
-      forward_probs     <- forward_probs %*% pn$gamma[[i]]*P 
+      forward_probs     <- forward_probs %*% pn$gamma[[g_ind]]*P 
       sum_forward_probs <- sum(forward_probs) 
       loglikelihood     <- loglikelihood + log(sum_forward_probs) 
       forward_probs     <- forward_probs/sum_forward_probs
@@ -952,7 +983,9 @@ norm_loglikelihood <- function(working_params, x,
 }
 
 norm_jacobian <- function(num_states, num_variables, num_subjects, 
-                          working_params, natural_params) {
+                          working_params, natural_params,
+                          state_dep_dist_pooled = FALSE,
+                          gamma_pooled = FALSE) {
   #' Compute modified jacobian of natural parameters with respect to working
   #' 
   #' The function computes a modified version of the jacobian of the normal 
@@ -964,18 +997,29 @@ norm_jacobian <- function(num_states, num_variables, num_subjects,
   #' @param natural_params A list of the normal natural HMM parameters `mu`, 
   #'   `sigma`, `gamma`, and `delta`.
   
-  n <- num_subjects*(2*num_variables*num_states + num_states*(num_states - 1))
+  mu_len   <- num_subjects*num_variables*num_states
+  ns       <- ng <- num_subjects
+  if (state_dep_dist_pooled) {
+    mu_len <- num_states*num_variables
+    ns     <- 1
+  }
+  gamma_len   <- (num_states^2 - num_states)*num_subjects
+  if (gamma_pooled) {
+    gamma_len <- num_states^2 - num_states
+    ng        <- 1
+  }
+  n <- 2*mu_len + gamma_len
   l <- num_states^2 - num_states
-  lmu <- num_subjects*num_variables*num_states
+  
   sigma  <- numeric()
-  for (i in 1:num_subjects) {
+  for (i in 1:num_variables) {
     sigma <- c(sigma, as.vector(t(natural_params$sigma[[i]])))
   }
   jacobian <- matrix(0, nrow = n, ncol = n)
-  jacobian[1:lmu, 1:lmu] <- diag(lmu)
-  jacobian[(lmu + 1):(2*lmu), (lmu + 1):(2*lmu)] <- diag(sigma)
+  jacobian[1:mu_len, 1:mu_len] <- diag(mu_len)
+  jacobian[(mu_len + 1):(2*mu_len), (mu_len + 1):(2*mu_len)] <- diag(sigma)
   
-  for (s in 1:num_subjects) {
+  for (s in 1:ng) {
     gamma <- natural_params$gamma[[s]]
     gamma_ordered <- gamma
     diag(gamma_ordered) <- NA
@@ -984,11 +1028,11 @@ norm_jacobian <- function(num_states, num_variables, num_subjects,
     for (i in 1:length(gamma_ordered)) {
       for (j in 1:length(gamma_ordered)) {
         if (i == j) {
-          jacobian[2*lmu + (s - 1)*w + i, 2*lmu + (s - 1)*w + i] <- 
+          jacobian[2*mu_len + (s - 1)*w + i, 2*mu_len + (s - 1)*w + i] <- 
             gamma_ordered[i]*(1 - gamma_ordered[j])
         } else if (which(gamma == gamma_ordered[i], arr.ind = TRUE)[1] == 
                    which(gamma == gamma_ordered[j], arr.ind = TRUE)[1]) {
-          jacobian[2*lmu + (s - 1)*w + i, 2*lmu + (s - 1)*w + j] <- 
+          jacobian[2*mu_len + (s - 1)*w + i, 2*mu_len + (s - 1)*w + j] <- 
             -gamma_ordered[i]*gamma_ordered[j]
         }
       } 
@@ -999,7 +1043,9 @@ norm_jacobian <- function(num_states, num_variables, num_subjects,
 
 norm_fit_hmm <- function(x, num_states, num_variables, num_subjects,
                          mu0, sigma0, gamma0, delta0 = NULL, 
-                         stationary = TRUE, hessian = FALSE) {
+                         stationary = TRUE, 
+                         state_dep_dist_pooled = FALSE, gamma_pooled = FALSE,
+                         hessian = FALSE) {
   #' Fit an HMM
   #' 
   #' This function fits data with an HMM by maximizing the likelihood estimate
@@ -1027,7 +1073,8 @@ norm_fit_hmm <- function(x, num_states, num_variables, num_subjects,
   
   working_params <- norm_working_params(num_states, num_subjects, 
                                         mu0, sigma0, gamma0, delta0, 
-                                        stationary = stationary)
+                                        stationary = stationary,
+                                        gamma_pooled = gamma_pooled)
   hmm <- nlm(norm_loglikelihood, 
              working_params, 
              x = x, 
@@ -1035,19 +1082,25 @@ norm_fit_hmm <- function(x, num_states, num_variables, num_subjects,
              num_variables = num_variables, 
              num_subjects = num_subjects, 
              stationary = stationary,
+             state_dep_dist_pooled = state_dep_dist_pooled,
+             gamma_pooled = gamma_pooled,
              hessian = hessian) 
   
   pn    <- norm_natural_params(num_states = num_states, 
                                num_variables = num_variables, 
                                num_subjects = num_subjects,
-                               hmm$estimate, 
-                               stationary = TRUE) 
+                               working_params = hmm$estimate, 
+                               stationary = TRUE,
+                               state_dep_dist_pooled = state_dep_dist_pooled,
+                               gamma_pooled = gamma_pooled) 
   if (hessian) {
     h <- hmm$hessian
     if (det(h) != 0) {
       h <- solve(h)
       jacobian <- norm_jacobian(num_states, num_variables, num_subjects, 
-                                hmm$estimate, pn)
+                                hmm$estimate, pn, 
+                                state_dep_dist_pooled = state_dep_dist_pooled,
+                                gamma_pooled = gamma_pooled)
       h <- t(jacobian)%*%h%*%jacobian
     }
   }
@@ -1087,7 +1140,9 @@ norm_fit_hmm <- function(x, num_states, num_variables, num_subjects,
   }
 }
 
-norm_generate_sample <- function(num_sample, hmm) {
+norm_generate_sample <- function(num_sample, hmm, 
+                                 state_dep_dist_pooled = FALSE, 
+                                 gamma_pooled = FALSE) {
   #' Generate data from a normal HMM
   #' 
   #' This function generates data from a normal HMM with specified parameters.
@@ -1103,24 +1158,34 @@ norm_generate_sample <- function(num_sample, hmm) {
   state         <- matrix(numeric(num_sample*num_subjects), 
                           nrow = num_sample, ncol = num_subjects)
   for (i in 1:num_subjects) {
-    state[1, i] <- sample(state_vec, 1, prob = hmm$delta[[i]])
+    g_ind   <- i
+    if (gamma_pooled) {
+      g_ind <- 1
+    }
+    state[1, i]   <- sample(state_vec, 1, prob = hmm$delta[[g_ind]])
     for (t in 2:num_sample) {
       state[t, i] <- sample(state_vec, 1, 
-                            prob = hmm$gamma[[i]][state[(t-1), i], ])
+                            prob = hmm$gamma[[g_ind]][state[(t - 1), i], ])
     }
   } 
   x <- array(dim = c(num_sample, num_variables, num_subjects))
   for (j in 1:num_variables) {
     for (i in 1:num_subjects) {
+      s_ind   <- i
+      if (state_dep_dist_pooled) {
+        s_ind <- 1
+      }
       x[, j, i] <- rnorm(num_sample, 
-                         mean = hmm$mu[[j]][i, state[, i]], 
-                         sd = hmm$sigma[[j]][i, state[, i]]) 
+                         mean = hmm$mu[[j]][s_ind, state[, i]], 
+                         sd = hmm$sigma[[j]][s_ind, state[, i]]) 
     }
   } 
   list(state = state, observ = x)
 }
 
-norm_viterbi <- function(x, hmm) {
+norm_viterbi <- function(x, hmm, 
+                         state_dep_dist_pooled = FALSE, 
+                         gamma_pooled = FALSE) {
   #' Global decoding by the Viterbi algorithm
   #'
   #' This function takes in data x assumed to be generated by the HMM hmm and 
@@ -1138,32 +1203,42 @@ norm_viterbi <- function(x, hmm) {
   sequence      <- matrix(0, nrow = n, ncol = num_subjects)
   
   for (i in 1:num_subjects) {
+    s_ind   <- g_ind <- i
+    if (state_dep_dist_pooled) {
+      s_ind <- 1
+    }
+    if (gamma_pooled) {
+      g_ind <- 1
+    }
     state_probs[[i]] <- matrix(0, nrow = n, ncol = num_states)
     P                <- rep(1, num_states)
     for (j in 1:num_variables) {
-      P <- P*dnorm(x[1, j, i], hmm$mu[[j]][i, ], hmm$sigma[[j]][i, ])
+      P <- P*dnorm(x[1, j, i], hmm$mu[[j]][s_ind, ], hmm$sigma[[j]][s_ind, ])
     } 
-    forward_probs         <- hmm$delta[[i]]*P
+    forward_probs         <- hmm$delta[[g_ind]]*P
     state_probs[[i]][1, ] <- forward_probs/sum(forward_probs)
     
     for (t in 2:n) {
       P <- rep(1, num_states)
       for (j in 1:num_variables) {
-        P <- P*dnorm(x[t, j, i], hmm$mu[[j]][i, ], hmm$sigma[[j]][i, ])
+        P <- P*dnorm(x[t, j, i], hmm$mu[[j]][s_ind, ], hmm$sigma[[j]][s_ind, ])
       }
-      forward_probs <- apply(state_probs[[i]][t - 1, ]*hmm$gamma[[i]], 2, max)*P
+      forward_probs <- apply(state_probs[[i]][t - 1, ]*
+                               hmm$gamma[[g_ind]], 2, max)*P
       state_probs[[i]][t, ] <- forward_probs/sum(forward_probs)
     }
     sequence[n, i] <- which.max(state_probs[[i]][n, ])
     for (t in (n - 1):1){
-      sequence[t, i] <- which.max(hmm$gamma[[i]][, sequence[t + 1]]*
+      sequence[t, i] <- which.max(hmm$gamma[[g_ind]][, sequence[t + 1]]*
                                     state_probs[[i]][t, ])
     }
   }
   sequence
 }
 
-norm_logforward <- function(x, hmm) {
+norm_logforward <- function(x, hmm, 
+                            state_dep_dist_pooled = FALSE, 
+                            gamma_pooled = FALSE) {
   #' Compute log forward probabilities
   #' 
   #' This function computes the log forward probabilities of the data based on
@@ -1171,18 +1246,25 @@ norm_logforward <- function(x, hmm) {
   #' 
   #' @inheritParams norm_viterbi
   
-  n             <- nrow(x) 
+  n             <- nrow(x)
   num_states    <- hmm$num_states
   num_variables <- hmm$num_variables
   num_subjects  <- hmm$num_subjects
   lalpha        <- list() 
   for (i in 1:num_subjects) {
+    s_ind   <- g_ind <- i
+    if (state_dep_dist_pooled) {
+      s_ind <- 1
+    }
+    if (gamma_pooled) {
+      g_ind <- 1
+    }
     lalpha[[i]] <- matrix(NA, nrow = num_states, ncol = n)
     P           <- rep(1, num_states)
     for (j in 1:num_variables) {
-      P <- P*dnorm(x[1, j, i], pn$mu[[j]][i, ], pn$sigma[[j]][i, ])
+      P <- P*dnorm(x[1, j, i], hmm$mu[[j]][s_ind, ], hmm$sigma[[j]][s_ind, ])
     }
-    forward_probs     <- pn$delta[[i]]*P
+    forward_probs     <- hmm$delta[[g_ind]]*P
     sum_forward_probs <- sum(forward_probs) 
     loglikelihood     <- log(sum_forward_probs)
     forward_probs     <- forward_probs/sum_forward_probs
@@ -1192,10 +1274,11 @@ norm_logforward <- function(x, hmm) {
       P     <- rep(1, num_states)
       for (j in 1:num_variables) {
         if (!is.na(x[t, j, i])) {
-          P <- P*dnorm(x[t, j, i], pn$mu[[j]][i, ], pn$sigma[[j]][i, ])
+          P <- P*dnorm(x[t, j, i], hmm$mu[[j]][s_ind, ], 
+                       hmm$sigma[[j]][s_ind, ])
         }
       }
-      forward_probs     <- forward_probs %*% pn$gamma[[i]]*P 
+      forward_probs     <- forward_probs %*% hmm$gamma[[g_ind]]*P 
       sum_forward_probs <- sum(forward_probs) 
       loglikelihood     <- loglikelihood + log(sum_forward_probs) 
       forward_probs     <- forward_probs/sum_forward_probs
@@ -1206,27 +1289,56 @@ norm_logforward <- function(x, hmm) {
 }
 
 
-# norm_forcast_psr <- function(x, hmm) {
-#   n             <- nrow(x)
-#   num_states    <- hmm$num_states
-#   num_variables <- hmm$num_variables
-#   num_subjects  <- hmm$num_subjects
-#   lalpha        <- norm_logforward(x, hmm)
-#   forcast_psr   <- list()
-#   for (i in 1:num_subjects) {
-#     pstepmat         <- matrix(0, n, num_states)
-#     forcast_psr[[i]] <- rep(0, n)
-#     P                <- rep(1, num_variables)
-#     for (j in 1:num_variables) {
-#       ind.step <- which(!is.na(x[, j, i]))
-#       for (k in 1:length(ind.step)){
-# 
-#       }
-#     }}
-# }
+norm_forcast_psr <- function(x, hmm, state_dep_dist_pooled = FALSE, 
+                             gamma_pooled = FALSE) {
+  n             <- nrow(x)
+  num_states    <- hmm$num_states
+  num_variables <- hmm$num_variables
+  num_subjects  <- hmm$num_subjects
+  lalpha        <- norm_logforward(x, hmm, 
+                                   state_dep_dist_pooled, 
+                                   gamma_pooled)
+  forcast_psr   <- list()
+  for (i in 1:num_subjects) {
+    s_ind   <- g_ind <- i
+    if (state_dep_dist_pooled) {
+      s_ind <- 1
+    }
+    if (gamma_pooled) {
+      g_ind <- 1
+    }
+    pstepmat         <- matrix(NA, n, num_states)
+    forcast_psr[[i]] <- rep(NA, n)
+    ind.step         <- 1:n
+    for (j in 1:num_variables) {
+      ind.step <- sort(intersect(ind.step, which(!is.na(x[, j, i]))))
+    }
+    for (k in ind.step) {
+      for (m in 1:num_states) {
+        P   <- 1
+        for (j in 1:num_variables) {
+          P <- P*pnorm(x[k, j, i], mean = hmm$mu[[j]][s_ind, m], 
+                       sd = hmm$sigma[[j]][s_ind, m])
+        }
+        pstepmat[k, m] <- P
+      }
+    }
+    if (1 %in% ind.step) {
+        forcast_psr[[i]][1] <- qnorm(hmm$delta[[g_ind]] %*% pstepmat[1, ])
+    }
+    for (t in 2:n) {
+      c <- max(lalpha[[i]][, t - 1])
+      a <- exp(lalpha[[i]][, t - 1] - c)
+      if (t %in% ind.step) {
+        forcast_psr[[i]][t] <- qnorm(t(a) %*% (hmm$gamma[[g_ind]]/sum(a)) %*% 
+                                       pstepmat[t, ])
+      }
+    }
+  }
+  forcast_psr
+}
 
-
-norm_se <- function(hmm) {
+norm_se <- function(hmm, state_dep_dist_pooled = FALSE, gamma_pooled = FALSE) {
   #' Compute standard errors of the fit HMM parameters
   #' 
   #' This function computes the standard errors of the fitted HMM parameters
@@ -1237,27 +1349,35 @@ norm_se <- function(hmm) {
   num_states    <- hmm$num_states
   num_variables <- hmm$num_variables
   num_subjects  <- hmm$num_subjects
+  ns          <- num_subjects
   
   mu_start    <- 1
   mu_end      <- num_states*num_variables*num_subjects
-  sigma_start <- mu_end + 1
   sigma_end   <- mu_end + num_states*num_variables*num_subjects
+  mu_len      <- sigma_len <- num_subjects*num_states
+  if (state_dep_dist_pooled) {
+    mu_end    <- num_states*num_variables
+    sigma_end <- mu_end + num_states*num_variables
+    mu_len    <- sigma_len <- num_states
+  }
+  sigma_start <- mu_end + 1
   gamma_start <- sigma_end + 1
   gamma_end   <- sigma_end + num_subjects*num_states^2 - num_subjects*num_states
+  if (gamma_pooled) {
+    gamma_end <- sigma_end + num_states^2 - num_states
+    ns        <- 1
+  }
+  h        <- sqrt(diag(hmm$inverse_hessian))
+  mu.se    <- split_vec(h, mu_start, mu_end, mu_len)       
+  sigma.se <- split_vec(h, sigma_start, sigma_end, sigma_len)
   
-  h <- sqrt(diag(hmm$inverse_hessian))
-  mu.se    <- split_vec(h, mu_start, mu_end, num_states*num_subjects)       
-  sigma.se <- split_vec(h, sigma_start, sigma_end, num_states*num_subjects)
   for (j in 1:num_variables) {
-    mu.se[[j]]    <- matrix(mu.se[[j]], ncol = num_states, 
-                            nrow = num_subjects, byrow = TRUE)
-    sigma.se[[j]] <- matrix(sigma.se[[j]], ncol = num_states, 
-                            nrow = num_subjects, byrow = TRUE)
+    mu.se[[j]]    <- matrix(mu.se[[j]], ncol = num_states, byrow = TRUE)
+    sigma.se[[j]] <- matrix(sigma.se[[j]], ncol = num_states, byrow = TRUE)
   }
   gamma.se <- list()
-  g <- split_vec(h, gamma_start, gamma_end, 
-                 num_states*(num_states - 1))
-  for (i in 1:num_subjects) {
+  g <- split_vec(h, gamma_start, gamma_end, num_states*(num_states - 1))
+  for (i in 1:ns) {
     gamma.se[[i]] <- diag(num_states)
     gamma.se[[i]][!gamma.se[[i]]] <- g[[i]]
     diag(gamma.se[[i]]) <- NA
@@ -1272,6 +1392,7 @@ norm_se <- function(hmm) {
 
 
 norm_ci <- function(x, num_states, num_variables, num_subjects, params_se, 
+                    state_dep_dist_pooled = FALSE,
                     x_step = 0.2, n = 100, level= 0.975) {
   #' Compute the confidence intervals of fitted normal distributions
   #' 
@@ -1286,37 +1407,40 @@ norm_ci <- function(x, num_states, num_variables, num_subjects, params_se,
   #' @param n A value indicating the number of samples used in the Monte Carlo
   #'   estimation of the confidence intervals.
   #' @param level The value indicating the desired confidence level.
-  #' 
-  conf_intervals <- list()
-  
+
+  conf_intervals        <- list()
   for (i in 1:num_subjects) {
     conf_intervals[[i]] <- list()
+    s_ind   <- i
+    if (state_dep_dist_pooled) {
+      s_ind <- 1
+    }
     for (j in 1:num_variables) {
       range       <- seq(min(x[, j, i]), max(x[, j, i]), length.out = 100)
       xc          <- length(range)
-      mu          <- params_se$mu[[j]][i, ]
-      mu.se       <- params_se$mu.se[[j]][i, ]
-      sigma       <- params_se$sigma[[j]][i, ]
-      sigma.se    <- params_se$sigma.se[[j]][i, ]
+      mu          <- params_se$mu[[j]][s_ind, ]
+      mu.se       <- params_se$mu.se[[j]][s_ind, ]
+      sigma       <- params_se$sigma[[j]][s_ind, ]
+      sigma.se    <- params_se$sigma.se[[j]][s_ind, ]
       density.lst <- list()
-      for (k in 1:num_states){
+      for (k in 1:num_states) {
         densities <- matrix(numeric(xc*n), ncol = xc, nrow = n)
-        for (l in 1:n){
+        for (l in 1:n) {
           sample.mu      <- rnorm(1, mu[k], mu.se[k])
           sample.sigma   <- rnorm(1, sigma[k], sigma.se[k])
           densities[l, ] <- dnorm(range, sample.mu, sample.sigma)
         }
         density.lst[[k]] <- densities
       }
-      upper <- matrix(numeric(xc*m), ncol=xc, nrow=m)
-      lower <- matrix(numeric(xc*m), ncol=xc, nrow=m)
+      upper <- matrix(numeric(xc*num_states), ncol = xc, nrow = num_states)
+      lower <- matrix(numeric(xc*num_states), ncol = xc, nrow = num_states)
       
-      for (k in 1:num_states){
+      for (k in 1:num_states) {
         densities <- density.lst[[k]]
-        for (t in 1:xc){
-          upper[k, t] <- quantile(densities[, t], probs = level, na.rm= TRUE)
+        for (t in 1:xc) {
+          upper[k, t] <- quantile(densities[, t], probs = level, na.rm = TRUE)
           lower[k, t] <- quantile(densities[, t], probs = 1 - level, 
-                                  na.rm= TRUE)
+                                  na.rm = TRUE)
         }
       }
       conf_intervals[[i]][[j]] <- list(range = range, 
@@ -1326,145 +1450,4 @@ norm_ci <- function(x, num_states, num_variables, num_subjects, params_se,
   }
   conf_intervals
 }
-
-
-# HMM Plotting ----------------
-
-#timeseries of observations (works for all types of distributions)
-timeseries <- function(sample, num_subjects, num_variables, length = 300) {
-  states <- sample$state
-  x      <- sample$observ
-  n      <- nrow(x)
-  Var    <- c("Variable 1", "Variable 2", "Variable 3", "Variable 4")
-  Sub    <- c("Subject 1", "Subject 2", "Subject 3", "Subject 4")
-  plots  <- list()
-  for (i in 1:num_subjects) {
-    subvar_data <- data.frame('State' = as.factor(states[1:length, i]))
-    subvar_data$Time  <- 1:length
-    for (j in 1:num_variables) {
-      subvar_data$Observation <- x[1:length, j, i]
-      p <- ggplot(subvar_data, aes(x = Time, y = Observation)) +
-        theme_light() +
-        ggtitle(Sub[i]) +
-        theme(axis.title.x = element_blank(), 
-              plot.title = element_text(hjust = 0.5)) +
-        labs(x = '', y = Var[j]) +
-        geom_point(aes(color = State)) +
-        geom_line(colour = 'grey', alpha = 0.8, lwd = 0.4)
-      plots <- c(plots, list(p))
-    }
-  }
-  plots
-  #ggarrange(plotlist = plots, common.legend = TRUE, legend = "bottom")
-}
-
-#plot histogram of observations with overlayed fit distributions normal
-norm_hist <- function(sample, num_states, num_subjects, num_variables, 
-                      hmm, width = 1, x_step = 0.2) {
-  states <- sample$state
-  x      <- sample$observ
-  n      <- nrow(x)
-  Var    <- c("Variable 1", "Variable 2", "Variable 3", "Variable 4")
-  Sub    <- c("Subject 1", "Subject 2", "Subject 3", "Subject 4")
-  plots  <- list()
-  for (i in 1:num_subjects) {
-    subvar_data <- data.frame('State' = as.factor(states[, i]))
-    for (j in 1:num_variables) {
-      subvar_data$Observation <- x[, j, i]
-      h <- ggplot() + 
-        geom_histogram(data = subvar_data, 
-                       aes(x = Observation), 
-                       binwidth = width,
-                       colour = "cornsilk4",
-                       fill = "white") +
-        theme_bw() +
-        ggtitle(Sub[i]) +
-        theme(panel.grid.major = element_blank(), 
-              panel.grid.minor = element_blank(),
-              plot.title = element_text(hjust = 0.5)) +
-        labs(x = Var[j], y = '')
-      
-      xfit <- seq(min(subvar_data$Observation), max(subvar_data$Observation), 
-                  by = x_step)
-      marginal <- numeric(length(xfit))
-      for (k in 1:num_states) {
-        yfit     <- dnorm(xfit, hmm$mu[[j]][i, k], hmm$sigma[[j]][i, k])
-        yfit     <- yfit*sum(subvar_data$State == k)*width
-        df       <- data.frame('xfit' = xfit, 'yfit' = yfit, 
-                               col = as.factor(rep(k, length(xfit))))
-        h        <- h + geom_line(data = df, aes(xfit, yfit, colour = col), 
-                                  lwd = 0.7)
-        marginal <- marginal + yfit
-      }
-      h     <- h + labs(color = "State")
-      df    <- data.frame('xfit' = xfit, 'yfit' = marginal)
-      h     <- h + geom_line(data = df, aes(xfit, yfit), col="black", lwd=0.7)
-      plots <- c(plots, list(h))
-    }
-  }
-  plots
-  #ggarrange(plotlist = plots, common.legend = TRUE, legend = "bottom")
-}
-
-norm_hist_ci <- function(x, viterbi, conf_intervals, 
-                         num_states, num_subjects, num_variables, 
-                         hmm, width = 1, x_step = 0.2) {
-  n      <- nrow(x)
-  Var <- c("Variable 1", "Variable 2", "Variable 3", "Variable 4")
-  Sub    <- c("Subject 1", "Subject 2", "Subject 3", "Subject 4")
-  plots  <- list()
-  for (i in 1:num_subjects) {
-    subvar_data <- data.frame('State' = as.factor(viterbi[, i]))
-    for (j in 1:num_variables) {
-      subvar_data$Observation <- x[, j, i]
-      h <- ggplot() + 
-        geom_histogram(data = subvar_data, 
-                       aes(x = Observation), 
-                       binwidth = width,
-                       colour = "cornsilk4",
-                       fill = "white") +
-        theme_bw() +
-        ggtitle(Sub[i]) +
-        theme(panel.grid.major = element_blank(), 
-              panel.grid.minor = element_blank(),
-              plot.title = element_text(hjust = 0.5)) +
-        labs(x = Var[j], y = '')
-      
-      xfit <- seq(min(subvar_data$Observation), max(subvar_data$Observation), 
-                  by = x_step)
-      marginal <- numeric(length(xfit))
-      for (k in 1:num_states) {
-        yfit     <- dnorm(xfit, hmm$mu[[j]][i, k], hmm$sigma[[j]][i, k])
-        yfit     <- yfit * sum(subvar_data$State == k) * width
-        df       <- data.frame('xfit' = xfit, 'yfit' = yfit, 
-                               col = as.factor(rep(k, length(xfit))))
-        h        <- h + geom_line(data = df, aes(xfit, yfit, colour = col), 
-                                  lwd = 0.7)
-        marginal <- marginal + yfit
-      }
-      h  <- h + labs(color = "State")
-      df <- data.frame('xfit' = xfit, 'yfit' = marginal)
-      h  <- h + geom_line(data=df,aes(xfit, yfit), col="black", lwd=0.7)
-      
-      for (k in 1:num_states){
-        upper <- conf_intervals[[i]][[j]]$upper[k, ]*
-          sum(subvar_data$State == k)*width
-        lower <- conf_intervals[[i]][[j]]$lower[k, ]*
-          sum(subvar_data$State == k)*width
-        df <- data.frame('x' = conf_intervals[[i]][[j]]$range, 
-                         'upper' = upper, 'lower' = lower)
-        h <- h + geom_ribbon(data = df, aes(x = x, ymin = lower, ymax = upper),
-                             fill = (k + 1), alpha = 0.4)
-      }
-      plots <- c(plots, list(h))
-    }
-  }
-  plots
-  # ggarrange(plotlist = plots, common.legend = TRUE, legend = "bottom", 
-  #           labels = c("Subject 1", 
-  #                      "Subject 1", 
-  #                      "Subject 2",
-  #                      "Subject 2"))
-}
-
 
