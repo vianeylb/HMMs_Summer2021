@@ -3,6 +3,7 @@ library(ggplot2)
 library(ggfortify)
 library(plyr)
 library(mvtnorm)
+library(parallel)
 library(Rcpp)
 
 sourceCpp("foralg.cpp")
