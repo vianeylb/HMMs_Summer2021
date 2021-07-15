@@ -5,35 +5,53 @@ library(plyr)
 library(bayesforecast)
 library(gridExtra)
 library(mvtnorm)
+library(Rcpp)
 
-#q: order of autoregressive model
-#phi: autoregressive model parameters, as list of qxq matrices
+sourceCpp("foralg.cpp")
+sourceCpp("dmvnrm_arma.cpp")
+
+# q: order of autoregressive model
+# phi: autoregressive model parameters, as list of qxq matrices
 
 # Get mean for given x in multivariate autoregressive series
-# phi is a list of matrices 
+# phi is a list of matrices
 # i is the time index
-get_mar_mean <- function(mu, phi, x, m, q, k, i){
+get_mar_mean <- function(mu, phi, x, m, q, k, i) {
   if (i == 1) {
     mean <- mu
   }
   else {
+    mean <- list()
     if (i <= q) {
-      n <- i - 1
+      x_lag <- as.vector(x[, (i - 1):1])
+      for (j in 1:m) {
+        mean[[j]] <- mu[[j]] + phi[[j]][, 1:((i - 1) * k)] %*% x_lag
+      }
     }
     else {
-      n <- q
-    }
-    mean <- list()
-    for (j in 1:m){
-      foo <- mu[[j]]
-      for (h in 1:n){
-        x_lag <- x[, i - h]
-        foo <- foo + phi[[j]][, ((h - 1) * k + 1):(h * k)] %*% x_lag 
+      x_lag <- as.vector(x[, (i - 1):(i - q)])
+      for (j in 1:m) {
+        mean[[j]] <- mu[[j]] + phi[[j]] %*% x_lag
       }
-      mean[[j]] <- foo
     }
   }
   return(mean)
+}
+
+get_all_mar_means <- function(x, mod, m, q, k) {
+  n <- ncol(x)
+  x_lags <- matrix(0, nrow = n, ncol = k * q)
+  for (i in 1:q){
+    x_lags[-c(1:i), ((i - 1) * k  + 1):(k * i)] <- t(x[, -c((n - i + 1):n)])
+  }
+  
+  means <- list()
+  for(i in 1:m){
+    mu_matrix <- matrix(mod$mu[[i]], nrow = n, ncol = k, byrow = TRUE)
+    means[[i]] <- mu_matrix + x_lags %*% t(mod$phi[[i]])
+  }
+  
+  return(means)
 }
 
 mar_hmm_generate_sample <- function(ns, mod) {
@@ -46,8 +64,7 @@ mar_hmm_generate_sample <- function(ns, mod) {
     }
   }
   x <- matrix(nrow = mod$k, ncol = ns)
-  means <- list()
-  for (i in 1:ns){
+  for (i in 1:ns) {
     mean <- get_mar_mean(mod$mu, mod$phi, x, mod$m, mod$q, mod$k, i)
     x[, i] <- rmvnorm(1, mean = mean[[state[i]]], sigma = mod$sigma[[state[i]]])
   }
@@ -55,7 +72,7 @@ mar_hmm_generate_sample <- function(ns, mod) {
 }
 
 mar_hmm_pn2pw <- function(m, mu, sigma, gamma, phi,
-                             delta = NULL, stationary = TRUE) {
+                          delta = NULL, stationary = TRUE) {
   mu <- unlist(mu, use.names = FALSE)
   tsigma <- lapply(sigma, diag_log_lower)
   tsigma <- unlist(tsigma, use.names = FALSE)
@@ -95,7 +112,7 @@ mar_hmm_pw2pn <- function(m, q, k, parvect, stationary = TRUE) {
     mu[[i]] <- parvect[count:(i * k)]
     count <- count + k
   }
-  
+
   tsigma <- list()
   t <- triangular_num(k)
   for (i in 1:m) {
@@ -108,21 +125,21 @@ mar_hmm_pw2pn <- function(m, q, k, parvect, stationary = TRUE) {
     count <- count + t
   }
   sigma <- lapply(tsigma, diag_exp)
-  
+
   tgamma <- parvect[count:(count + m * (m - 1) - 1)]
   count <- count + m * (m - 1)
   gamma <- diag(m)
   gamma[!gamma] <- exp(tgamma)
   gamma <- gamma / apply(gamma, 1, sum)
-  
+
   tphi <- parvect[(count:(count + k * k * q * m))]
   count <- count + k * k * q * m
   phi <- list()
   for (i in 1:m) {
     foo <- tphi[((i - 1) * k * k * q + 1):(i * k * k * q)]
     phi[[i]] <- matrix(foo, nrow = k)
-  } 
-  
+  }
+
   if (stationary) {
     delta <- solve(t(diag(m) - gamma + 1), rep(1, m))
   }
@@ -138,28 +155,23 @@ mar_hmm_mllk <- function(parvect, x, m, q, k, stationary = TRUE) {
   n <- ncol(x)
   pn <- mar_hmm_pw2pn(m, q, k, parvect, stationary = stationary)
   p <- mar_densities(x, pn, m, q, k, n)
-  foo <- pn$delta * p[1, ]
-  sumfoo <- sum(foo)
-  lscale <- log(sumfoo)
-  foo <- foo / sumfoo
-  for (i in 2:n) {
-    foo <- foo %*% pn$gamma * p[i, ]
-    sumfoo <- sum(foo)
-    lscale <- lscale + log(sumfoo)
-    foo <- foo / sumfoo
-  }
+  foo <- matrix(pn$delta, ncol = m)
+  lscale <- foralg(n, m, foo, pn$gamma, p)
   mllk <- -lscale
   return(mllk)
 }
 
 # Returns n * m matrix of state dependent probability densities
-
 mar_densities <- function(x, mod, m, q, k, n) {
   p <- matrix(nrow = n, ncol = m)
+  cores <- detectCores()
+  means <- get_all_mar_means(x, mod, m, q, k)
   for (i in 1:n) {
-    mean <- get_mar_mean(mod$mu, mod$phi, x, m, q, k, i)
-    for (j in 1:m){
-      p[i, j] <- dmvnorm(x[, i], mean[[j]], mod$sigma[[j]])
+    for (j in 1:m) {
+      p[i, j] <- dmvnrm_arma_mc(matrix(x[, i], ncol = k),
+                                means[[j]][i, ],
+                                mod$sigma[[j]],
+                                cores = cores)
     }
   }
   return(p)
@@ -167,53 +179,36 @@ mar_densities <- function(x, mod, m, q, k, n) {
 
 # Computing MLE from natural parameters
 mar_hmm_mle <- function(x, m, q, k, mu0, sigma0, gamma0, phi0, delta0 = NULL,
-                           stationary = TRUE, hessian = FALSE) {
+                        stationary = TRUE, hessian = FALSE) {
   parvect0 <- mar_hmm_pn2pw(m, mu0, sigma0, gamma0, phi0, delta0,
-                               stationary = stationary)
-  mod <- nlm(mar_hmm_mllk, parvect0, x = x, m = m, q = q, k = k,
-             stationary = stationary, hessian = hessian)
-  pn <- mar_hmm_pw2pn(m = m, q = q, k = k, parvect = mod$estimate,
-                         stationary = stationary)
+    stationary = stationary
+  )
+  mod <- nlm(mar_hmm_mllk, parvect0,
+    x = x, m = m, q = q, k = k,
+    stationary = stationary, hessian = hessian, steptol = 0.00001
+  )
+  pn <- mar_hmm_pw2pn(
+    m = m, q = q, k = k, parvect = mod$estimate,
+    stationary = stationary
+  )
   mllk <- mod$minimum
-  
+
   np <- length(parvect0)
   aic <- 2 * (mllk + np)
   n <- sum(!is.na(x))
   bic <- 2 * mllk + np * log(n)
-  
+
   if (hessian) {
-    if (!stationary) {
-      np2 <- np - m + 1
-      h <- mod$hessian[1:np2, 1:np2]
-    }
-    else {
-      np2 <- np
-      h <- mod$hessian
-    }
-    if (det(h) != 0) {
-      h <- solve(h)
-      jacobian <- mar_jacobian(m, k, n = np2, mod$estimate,
-                                  stationary = stationary)
-      h <- t(jacobian) %*% h %*% jacobian
-      return(list(
-        m = m, q = q, k = k, mu = pn$mu, sigma = pn$sigma,
-        gamma = pn$gamma, phi = pn$phi, delta = pn$delta,
-        code = mod$code, mllk = mllk,
-        aic = aic, bic = bic, invhessian = h
-      ))
-    }
-    else {
-      return(list(
-        m = m, q = q, k = k, mu = pn$mu, sigma = pn$sigma,
-        gamma = pn$gamma, phi = pn$phi, delta = pn$delta,
-        code = mod$code, mllk = mllk,
-        aic = aic, bic = bic, hessian = mod$hessian
-      ))
-    }
+    return(list(
+      m = m, q = q, k = k, mu = pn$mu, sigma = pn$sigma,
+      gamma = pn$gamma, phi = pn$phi, delta = pn$delta,
+      code = mod$code, mllk = mllk,
+      aic = aic, bic = bic, hessian = mod$hessian, np = np
+    ))
   }
   else {
     return(list(
-      m = m, q = q, k = k, mu = pn$mu, sigma = pn$sigma, 
+      m = m, q = q, k = k, mu = pn$mu, sigma = pn$sigma,
       gamma = pn$gamma, phi = pn$phi, delta = pn$delta,
       code = mod$code, mllk = mllk, aic = aic, bic = bic
     ))
@@ -227,7 +222,7 @@ mar_hmm_viterbi <- function(x, mod) {
   foo <- mod$delta * p[1, ]
   xi[1, ] <- foo / sum(foo)
   for (t in 2:n) {
-    foo <- apply(xi[t - 1, ] * mod$gamma, 2, max) * p[i, ]
+    foo <- apply(xi[t - 1, ] * mod$gamma, 2, max) * p[t, ]
     xi[t, ] <- foo / sum(foo)
   }
   iv <- numeric(n)
@@ -290,7 +285,7 @@ mar_hmm_pseudo_residuals <- function(x, mod, type, stationary) {
     lbfact <- apply(lb, 2, max)
     p <- mar_dist_mat(x, mod, n)
     npsr <- rep(NA, n)
-    npsr[1] <- qnorm(mod$delta %*% p[1, ])
+    npsr[1] <- qnorm(delta %*% p[1, ])
     for (i in 2:n) {
       a <- exp(la[, i - 1] - lafact[i])
       b <- exp(lb[, i] - lbfact[i])
@@ -305,11 +300,11 @@ mar_hmm_pseudo_residuals <- function(x, mod, type, stationary) {
     la <- mar_hmm_lforward(x, mod)
     p <- mar_dist_mat(x, mod, n)
     npsr <- rep(NA, n)
-    npsr[1] <- qnorm(mod$delta %*% p[1, ])
+    npsr[1] <- qnorm(delta %*% p[1, ])
     for (i in 2:n) {
       la_max <- max(la[, i - 1])
       a <- exp(la[, i - 1] - la_max)
-      npsr[i] <- qnorm(t(a) %*% (gamma / sum(a)) %*% p[i, ])
+      npsr[i] <- qnorm(t(a) %*% (mod$gamma / sum(a)) %*% p[i, ])
     }
     return(data_frame(npsr, index = c(1:n)))
   }
@@ -319,41 +314,63 @@ mar_hmm_pseudo_residuals <- function(x, mod, type, stationary) {
 # Returns n * m matrix
 mar_dist_mat <- function(x, mod, n) {
   p <- matrix(NA, n, mod$m)
+  means <- get_all_mar_means(x, mod, mod$m, mod$q, mod$k)
   for (i in 1:n) {
-    mean <- get_mar_mean(mod$mu, mod$phi, x, mod$m, mod$q, mod$k, i)
     for (j in 1:mod$m) {
-      p[i, j] <- pmvnorm(lower = rep(-Inf, k),
-                         upper = x[, i],
-                         mean = as.vector(mean[[j]]),
-                         sigma = mod$sigma[[j]])
+      p[i, j] <- pmvnorm(
+        lower = rep(-Inf, mod$k),
+        upper = x[, i],
+        mean = as.vector(means[[j]][i, ]),
+        sigma = mod$sigma[[j]]
+      )
     }
   }
   return(p)
 }
 
-mar_jacobian <- function(m, q, k, n, parvect, stationary = TRUE) {
-  pn <- mar_hmm_pw2pn(m, q, k, parvect, stationary)
+mar_inv_hessian <- function(mod, stationary = TRUE){
+  if (!stationary) {
+    np2 <- mod$np - mod$m + 1
+    h <- mod$hessian[1:np2, 1:np2]
+  }
+  else {
+    np2 <- mod$np
+    h <- mod$hessian
+  }
+  h <- solve(h)
+  jacobian <- norm_jacobian(mod, np2)
+  h <- t(jacobian) %*% h %*% jacobian
+  return(h)
+}
+
+mar_jacobian <- function(mod, n) {
+  m <- mod$m
+  q <- mod$q
+  k <- mod$k
+
   jacobian <- matrix(0, nrow = n, ncol = n)
   jacobian[1:(m * k), 1:(m * k)] <- diag(m * k)
-  
+
   rowcount <- m * k + 1
   t <- triangular_num(k)
   for (i in 1:m) {
-    sigma <- pn$sigma[[i]]
+    sigma <- mod$sigma[[i]]
     sigma[lower.tri(sigma, diag = FALSE)] <-
       rep(1, length(sigma[lower.tri(sigma, diag = FALSE)]))
     sigma <- sigma[lower.tri(sigma, diag = TRUE)]
-    jacobian[rowcount:(rowcount + t - 1),
-             rowcount:(rowcount + t - 1)] <- diag(sigma)
+    jacobian[
+      rowcount:(rowcount + t - 1),
+      rowcount:(rowcount + t - 1)
+    ] <- diag(sigma)
     rowcount <- rowcount + t
   }
-  
+
   colcount <- rowcount
   for (i in 1:m) {
     for (j in 1:m) {
       if (j != i) {
-        foo <- -pn$gamma[i, j] * pn$gamma[i, ]
-        foo[j] <- pn$gamma[i, j] * (1 - pn$gamma[i, j])
+        foo <- -mod$gamma[i, j] * mod$gamma[i, ]
+        foo[j] <- mod$gamma[i, j] * (1 - mod$gamma[i, j])
         foo <- foo[-i]
         jacobian[rowcount, colcount:(colcount + m - 2)] <- foo
         rowcount <- rowcount + 1
@@ -361,10 +378,10 @@ mar_jacobian <- function(m, q, k, n, parvect, stationary = TRUE) {
     }
     colcount <- colcount + m - 1
   }
-  
-  phi <- unlist(pn$phi, use.names = FALSE)
+
+  phi <- unlist(mod$phi, use.names = FALSE)
   jacobian[rowcount:n, colcount:n] <- diag(phi)
-  
+
   return(jacobian)
 }
 
@@ -380,28 +397,31 @@ mar_bootstrap_estimates <- function(mod, n, len, stationary) {
   for (i in 1:n) {
     sample <- mar_hmm_generate_sample(len, mod)
     mod2 <- mar_hmm_mle(sample$obs, m, q, k, mod$mu, mod$sigma,
-                           mod$gamma, mod$phi, mod$delta,
-                           stationary = stationary)
+      mod$gamma, mod$phi, mod$delta,
+      stationary = stationary
+    )
     mu_estimate[((i - 1) * m * k + 1):(i * m * k)] <-
       unlist(mod2$mu, use.names = FALSE)
     sigma_estimate[((i - 1) * m * k * k + 1):(i * m * k * k)] <-
       unlist(mod2$sigma, use.names = FALSE)
     gamma_estimate[((i - 1) * m * m + 1):(i * m * m)] <- mod2$gamma
-    gamma_estimate[((i - 1) * m * k * k * q + 1):(i * m * k * k * q)] <-
+    phi_estimate[((i - 1) * m * k * k * q + 1):(i * m * k * k * q)] <-
       unlist(mod2$phi, use.names = FALSE)
     delta_estimate[((i - 1) * m + 1):(i * m)] <- mod2$delta
   }
-  return(list(mu = mu_estimate,
-              sigma = sigma_estimate,
-              gamma = gamma_estimate,
-              phi = phi_estimate,
-              delta = delta_estimate))
+  return(list(
+    mu = mu_estimate,
+    sigma = sigma_estimate,
+    gamma = gamma_estimate,
+    phi = phi_estimate,
+    delta = delta_estimate
+  ))
 }
 
 mar_bootstrap_ci <- function(mod, bootstrap, alpha) {
   m <- mod$m
   k <- mod$k
-  
+
   mu_lower <- matrix(NA, m, k)
   mu_upper <- matrix(NA, m, k)
   bootstrap_mu <- data_frame(mu = bootstrap$mu)
@@ -422,7 +442,7 @@ mar_bootstrap_ci <- function(mod, bootstrap, alpha) {
         quantile(foo$mu, alpha / 2, names = FALSE)
     }
   }
-  
+
   # Only want lower triangle of each sigma matrix, since is symmetric
   t <- triangular_num(k)
   mat <- matrix(c(1:(k * k)), k)
@@ -448,7 +468,7 @@ mar_bootstrap_ci <- function(mod, bootstrap, alpha) {
         quantile(foo$sigma, alpha / 2, names = FALSE)
     }
   }
-  
+
   gamma_lower <- rep(NA, m * m)
   gamma_upper <- rep(NA, m * m)
   bootstrap_gamma <- data_frame(gamma = bootstrap$gamma)
@@ -467,9 +487,9 @@ mar_bootstrap_ci <- function(mod, bootstrap, alpha) {
     gamma_upper[i] <- 2 * gamma[i] -
       quantile(foo$gamma, alpha / 2, names = FALSE)
   }
-  
-  phi_lower <- mat(nrow = m * k, ncol = k * q)
-  phi_upper <- rep(NA, m * m)
+
+  phi_lower <- matrix(NA, nrow = m * k, ncol = k * q)
+  phi_upper <- matrix(NA, nrow = m * k, ncol = k * q)
   bootstrap_phi <- data_frame(phi = bootstrap$phi)
   phi <- unlist(mod$phi, use.names = FALSE)
   for (i in 1:(m * k * k * q)) {
@@ -486,7 +506,7 @@ mar_bootstrap_ci <- function(mod, bootstrap, alpha) {
     phi_upper[i] <- 2 * phi[i] -
       quantile(foo$phi, alpha / 2, names = FALSE)
   }
-  
+
   delta_lower <- rep(NA, m)
   delta_upper <- rep(NA, m)
   bootstrap_delta <- data_frame(delta = bootstrap$delta)
@@ -503,7 +523,7 @@ mar_bootstrap_ci <- function(mod, bootstrap, alpha) {
     delta_upper[i] <- 2 * delta[i] -
       quantile(foo$delta, alpha / 2, names = FALSE)
   }
-  
+
   return(list(
     mu_lower = mu_lower, mu_upper = mu_upper,
     sigma_lower = sigma_lower, sigma_upper = sigma_upper,
@@ -512,4 +532,3 @@ mar_bootstrap_ci <- function(mod, bootstrap, alpha) {
     delta_lower = delta_lower, delta_upper = delta_upper
   ))
 }
-
