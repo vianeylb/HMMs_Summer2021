@@ -3,6 +3,10 @@ library(ggplot2)
 library(ggfortify)
 library(plyr)
 library(mvtnorm)
+library(Rcpp)
+
+sourceCpp("foralg.cpp")
+sourceCpp("dmvnrm_arma.cpp")
 
 setwd("C:/Jessica/UofT Y4/Research/Coding")
 
@@ -44,7 +48,7 @@ diag_log_lower <- function(mat) {
   return(vect)
 }
 
-  # Applies exp to only diagonal elements of matrix
+# Applies exp to only diagonal elements of matrix
 diag_exp <- function(mat) {
   diag(mat) <- exp(diag(mat))
   return(mat)
@@ -102,41 +106,42 @@ mvnorm_hmm_pw2pn <- function(m, k, parvect, stationary = TRUE) {
 mvnorm_hmm_mllk <- function(parvect, x, m, k, stationary = TRUE, ...) {
   n <- ncol(x)
   pn <- mvnorm_hmm_pw2pn(m, k, parvect, stationary = stationary)
-  p <- mvnorm_densities(x[, 1], pn, m)
-  foo <- pn$delta * p
-  sumfoo <- sum(foo)
-  lscale <- log(sumfoo)
-  foo <- foo / sumfoo
-  for (i in 2:n) {
-    p <- mvnorm_densities(x[, i], pn, m)
-    foo <- foo %*% pn$gamma * p
-    sumfoo <- sum(foo)
-    lscale <- lscale + log(sumfoo)
-    foo <- foo / sumfoo
-  }
+  p <- mvnorm_densities2(x, pn, m, n)
+  foo <- matrix(pn$delta, ncol=3)
+  lscale <- foralg(n, m, foo, pn$gamma, p)
   mllk <- -lscale
   return(mllk)
 }
 
-# Get state dependent probability densities given x and mod
-mvnorm_densities <- function(x, mod, m) {
-  pvect <- numeric(m)
-  for (i in 1:m) {
-    pvect[i] <- dmvnorm(x, mod$mu[[i]], mod$sigma[[i]])
+# Returns n * m matrix of state dependent probability densities
+mvnorm_densities <- function(x, mod, m, n) {
+  p <- matrix(nrow = n, ncol = m)
+  cores <- detectCores()
+  for (i in 1:n) {
+    for (j in 1:m) {
+      p[i, j] <- dmvnrm_arma_mc(matrix(x[, i], ncol = k),
+                                mod$mu[[j]], mod$sigma[[j]])
+    }
   }
-  return(pvect)
+  return(p)
 }
 
 # Computing MLE from natural parameters
 mvnorm_hmm_mle <- function(x, m, k, mu0, sigma0, gamma0, delta0 = NULL,
                            stationary = TRUE, hessian = FALSE, ...) {
-  parvect0 <- mvnorm_hmm_pn2pw(m = m, mu = mu0, sigma = sigma0,
-                               gamma = gamma0, delta = delta0,
-                               stationary = stationary)
-  mod <- nlm(mvnorm_hmm_mllk, parvect0, x = x, m = m, k = k,
-             stationary = stationary, hessian = hessian)
-  pn <- mvnorm_hmm_pw2pn(m = m, k = k, parvect = mod$estimate,
-                         stationary = stationary)
+  parvect0 <- mvnorm_hmm_pn2pw(
+    m = m, mu = mu0, sigma = sigma0,
+    gamma = gamma0, delta = delta0,
+    stationary = stationary
+  )
+  mod <- nlm(mvnorm_hmm_mllk, parvect0,
+    x = x, m = m, k = k,
+    stationary = stationary, hessian = hessian
+  )
+  pn <- mvnorm_hmm_pw2pn(
+    m = m, k = k, parvect = mod$estimate,
+    stationary = stationary
+  )
   mllk <- mod$minimum
 
   np <- length(parvect0)
@@ -145,38 +150,17 @@ mvnorm_hmm_mle <- function(x, m, k, mu0, sigma0, gamma0, delta0 = NULL,
   bic <- 2 * mllk + np * log(n)
 
   if (hessian) {
-    if (!stationary) {
-      np2 <- np - m + 1
-      h <- mod$hessian[1:np2, 1:np2]
-    }
-    else {
-      np2 <- np
-      h <- mod$hessian
-    }
-    if (det(h) != 0) {
-      h <- solve(h)
-      jacobian <- mvnorm_jacobian(m, k, n = np2, mod$estimate,
-                                  stationary = stationary)
-      h <- t(jacobian) %*% h %*% jacobian
-      return(list(
-        m = m, k = k, mu = pn$mu, sigma = pn$sigma,
-        gamma = pn$gamma, delta = pn$delta,
-        code = mod$code, mllk = mllk,
-        aic = aic, bic = bic, invhessian = h
-      ))
-    }
-    else {
-      return(list(
-        m = m, k = k, mu = pn$mu, sigma = pn$sigma,
-        gamma = pn$gamma, delta = pn$delta,
-        code = mod$code, mllk = mllk,
-        aic = aic, bic = bic, hessian = mod$hessian
-      ))
-    }
+    return(list(
+      m = m, k = k, mu = pn$mu, sigma = pn$sigma,
+      gamma = pn$gamma, delta = pn$delta,
+      code = mod$code, mllk = mllk,
+      aic = aic, bic = bic, hessian = mod$hessian, np = np
+    ))
   }
   else {
     return(list(
-      m = m, k = k, mu = pn$mu, sigma = pn$sigma, gamma = pn$gamma, delta = pn$delta,
+      m = m, k = k, mu = pn$mu, sigma = pn$sigma,
+      gamma = pn$gamma, delta = pn$delta,
       code = mod$code, mllk = mllk, aic = aic, bic = bic
     ))
   }
@@ -277,7 +261,7 @@ mvnorm_hmm_pseudo_residuals <- function(x, mod, type, stationary = TRUE) {
     lbfact <- apply(lb, 2, max)
     p <- mvnorm_dist_mat(x, mod)
     npsr <- rep(NA, n)
-    npsr[1] <- qnorm(mod$delta %*% p[1, ])
+    npsr[1] <- qnorm(delta %*% p[1, ])
     for (i in 2:n) {
       a <- exp(la[, i - 1] - lafact[i])
       b <- exp(lb[, i] - lbfact[i])
@@ -292,7 +276,7 @@ mvnorm_hmm_pseudo_residuals <- function(x, mod, type, stationary = TRUE) {
     la <- mvnorm_hmm_lforward(x, mod)
     p <- mvnorm_dist_mat(x, mod)
     npsr <- rep(NA, n)
-    npsr[1] <- qnorm(mod$delta %*% p[1, ])
+    npsr[1] <- qnorm(delta %*% p[1, ])
     for (i in 2:n) {
       la_max <- max(la[, i - 1])
       a <- exp(la[, i - 1] - la_max)
@@ -307,17 +291,36 @@ mvnorm_dist_mat <- function(x, mod) {
   p <- matrix(NA, n, mod$m)
   for (i in 1:n) {
     for (j in 1:m) {
-      p[i, j] <- pmvnorm(lower = rep(-Inf, mod$k), upper = x[, i],
-                        mean = mod$mu[[j]], sigma = mod$sigma[[j]])
+      p[i, j] <- pmvnorm(
+        lower = rep(-Inf, mod$k), upper = x[, i],
+        mean = mod$mu[[j]], sigma = mod$sigma[[j]]
+      )
     }
   }
   return(p)
 }
 
+mvnorm_inv_hessian <- function(mod, stationary = TRUE){
+  if (!stationary) {
+    np2 <- mod$np - mod$m + 1
+    h <- mod$hessian[1:np2, 1:np2]
+  }
+  else {
+    np2 <- mod$np
+    h <- mod$hessian
+  }
+  h <- solve(h)
+  jacobian <- norm_jacobian(mod, np2)
+  h <- t(jacobian) %*% h %*% jacobian
+  return(h)
+}
+
+
 # Jacobian matrix for parameters
 # n should be total number of parameters estimated, excluding delta
-mvnorm_jacobian <- function(m, k, n, parvect, stationary = TRUE) {
-  pn <- mvnorm_hmm_pw2pn(m, k, parvect, stationary)
+mvnorm_jacobian <- function(mod, n) {
+  m <- mod$m
+  k <- mod$k
   jacobian <- matrix(0, nrow = n, ncol = n)
   # Jacobian for mu only is a m*k identity matrix
   jacobian[1:(m * k), 1:(m * k)] <- diag(m * k)
@@ -326,20 +329,22 @@ mvnorm_jacobian <- function(m, k, n, parvect, stationary = TRUE) {
   # There are t*m sigma parameters
   t <- triangular_num(k)
   for (i in 1:m) {
-    sigma <- pn$sigma[[i]]
+    sigma <- mod$sigma[[i]]
     sigma[lower.tri(sigma, diag = FALSE)] <-
       rep(1, length(sigma[lower.tri(sigma, diag = FALSE)]))
     sigma <- sigma[lower.tri(sigma, diag = TRUE)]
-    jacobian[rowcount:(rowcount + t - 1),
-             rowcount:(rowcount + t - 1)] <- diag(sigma)
+    jacobian[
+      rowcount:(rowcount + t - 1),
+      rowcount:(rowcount + t - 1)
+    ] <- diag(sigma)
     rowcount <- rowcount + t
   }
   colcount <- rowcount
   for (i in 1:m) {
     for (j in 1:m) {
       if (j != i) {
-        foo <- -pn$gamma[i, j] * pn$gamma[i, ]
-        foo[j] <- pn$gamma[i, j] * (1 - pn$gamma[i, j])
+        foo <- -mod$gamma[i, j] * mod$gamma[i, ]
+        foo[j] <- mod$gamma[i, j] * (1 - mod$gamma[i, j])
         foo <- foo[-i]
         jacobian[rowcount, colcount:(colcount + m - 2)] <- foo
         rowcount <- rowcount + 1
@@ -360,7 +365,9 @@ mvnorm_bootstrap_estimates <- function(mod, n, k, len, stationary) {
   for (i in 1:n) {
     sample <- mvnorm_hmm_generate_sample(len, mod)
     mod2 <- mvnorm_hmm_mle(sample$obs, m, k, mod$mu, mod$sigma,
-                           mod$gamma, mod$delta, stationary = stationary)
+      mod$gamma, mod$delta,
+      stationary = stationary
+    )
     mu_estimate[((i - 1) * m * k + 1):(i * m * k)] <-
       unlist(mod2$mu, use.names = FALSE)
     sigma_estimate[((i - 1) * m * k * k + 1):(i * m * k * k)] <-
@@ -368,8 +375,10 @@ mvnorm_bootstrap_estimates <- function(mod, n, k, len, stationary) {
     gamma_estimate[((i - 1) * m * m + 1):(i * m * m)] <- mod2$gamma
     delta_estimate[((i - 1) * m + 1):(i * m)] <- mod2$delta
   }
-  return(list(mu = mu_estimate, sigma = sigma_estimate,
-              gamma = gamma_estimate, delta = delta_estimate))
+  return(list(
+    mu = mu_estimate, sigma = sigma_estimate,
+    gamma = gamma_estimate, delta = delta_estimate
+  ))
 }
 
 mvnorm_bootstrap_ci <- function(mod, bootstrap, alpha, m, k) {
