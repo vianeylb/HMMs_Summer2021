@@ -2,24 +2,33 @@ library(tidyverse)
 library(ggplot2)
 library(ggfortify)
 library(plyr)
+library(Rcpp)
+
+sourceCpp("foralg.cpp")
 
 graph_hmm_output <- function(output) {
-  ggplot(output, aes(x = index, y = obs, color = state)) +
+  plot <- ggplot(output, aes(x = index, y = obs, color = state)) +
     geom_line() +
     theme_minimal() +
     scale_colour_continuous(type = "viridis")
+  return(plot)
 }
 
 graph_hmm_hist <- function(output) {
-  ggplot(output, aes(obs)) +
+  plot <- ggplot(output, aes(obs)) +
     geom_histogram(binwidth = 1, colour = "navy", fill = "light blue") +
     theme_minimal()
+  return(plot)
 }
 
 # Get normal marginal distribution
 norm_marginal <- function(start, end, n, mod) {
-  # Get stationary distribution
-  delta <- solve(t(diag(mod$m) - mod$gamma + 1), rep(1, mod$m))
+  if (stationary){
+    delta <- solve(t(diag(mod$m) - mod$gamma + 1), rep(1, mod$m))
+  }
+  else{
+    delta <- mod$delta
+  }
   x <- seq(start, end, length.out = n)
   mnorm <- delta[1] * dnorm(x, mean = mod$mu[1], sd = mod$sigma[1])
   for (i in 2:mod$m) {
@@ -66,30 +75,23 @@ norm_hmm_pw2pn <- function(m, parvect, stationary = TRUE) {
 }
 
 # Computing minus the log-likelihood from the working parameters
-norm_hmm_mllk <- function(parvect, x, m, stationary = TRUE, ...) {
-  if (m == 1) {
-    return(-sum(dnorm(x, mean = parvect[1], sd = exp(parvect[2]), log = TRUE)))
-  }
+norm_hmm_mllk <- function(parvect, x, m, stationary = TRUE) {
   n <- length(x)
   pn <- norm_hmm_pw2pn(m, parvect, stationary = stationary)
-  foo <- pn$delta * dnorm(x[1], pn$mu, pn$sigma)
-  sumfoo <- sum(foo)
-  lscale <- log(sumfoo)
-  foo <- foo / sumfoo
-  for (i in 2:n) {
-    if (!is.na(x[i])) {
-      p <- dnorm(x[i], pn$mu, pn$sigma)
-    }
-    else {
-      p <- rep(1, m)
-    }
-    foo <- foo %*% pn$gamma * p
-    sumfoo <- sum(foo)
-    lscale <- lscale + log(sumfoo)
-    foo <- foo / sumfoo
-  }
+  p <- norm_densities(x, pn, m, n)
+  foo <- matrix(pn$delta, ncol=3)
+  lscale <- foralg(n, m, foo, pn$gamma, p)
   mllk <- -lscale
   return(mllk)
+}
+
+# Returns n * m matrix of state dependent probability densities
+norm_densities <- function(x, mod, m, n) {
+  p <- matrix(nrow = n, ncol = m)
+  for (i in 1:n) {
+    p[i, ] <- dnorm(x[i], mod$mu, mod$sigma)
+  }
+  return(p)
 }
 
 # Computing MLE from natural parameters
@@ -98,10 +100,10 @@ norm_hmm_mle <- function(x, m, mu0, sigma0, gamma0,
                          hessian = FALSE, ...) {
   parvect0 <- norm_hmm_pn2pw(m, mu0, sigma0, gamma0, delta0,
                              stationary = stationary)
-  mod <- nlm(norm_hmm_mllk, parvect0, x = x, m = m, 
+  mod <- nlm(norm_hmm_mllk, parvect0, x = x, m = m,
              stationary = stationary,
              hessian = hessian)
-  pn <- norm_hmm_pw2pn(m, mod$estimate, 
+  pn <- norm_hmm_pw2pn(m, mod$estimate,
                        stationary = stationary)
   mllk <- mod$minimum
 
@@ -111,34 +113,12 @@ norm_hmm_mle <- function(x, m, mu0, sigma0, gamma0,
   bic <- 2 * mllk + np * log(n)
 
   if (hessian) {
-    if (!stationary) {
-      np2 <- np - m + 1
-      h <- mod$hessian[1:np2, 1:np2]
-    }
-    else {
-      np2 <- np
-      h <- mod$hessian
-    }
-    if (det(h) != 0) {
-      h <- solve(h)
-      jacobian <- norm_jacobian(m, np2, mod$estimate, 
-                                stationary = stationary)
-      h <- t(jacobian) %*% h %*% jacobian
-      return(list(
-        m = m, mu = pn$mu, sigma = pn$sigma,
-        gamma = pn$gamma, delta = pn$delta,
-        code = mod$code, mllk = mllk,
-        aic = aic, bic = bic, invhessian = h
-      ))
-    }
-    else {
-      return(list(
-        m = m, mu = pn$mu, sigma = pn$sigma,
-        gamma = pn$gamma, delta = pn$delta,
-        code = mod$code, mllk = mllk,
-        aic = aic, bic = bic, hessian = mod$hessian
-      ))
-    }
+    return(list(
+      m = m, mu = pn$mu, sigma = pn$sigma,
+      gamma = pn$gamma, delta = pn$delta,
+      code = mod$code, mllk = mllk,
+      aic = aic, bic = bic, hessian = mod$hessian, np = np
+    ))
   }
   else {
     return(list(
@@ -269,18 +249,34 @@ norm_hmm_pseudo_residuals <- function(x, mod, type, stationary) {
   }
 }
 
-norm_jacobian <- function(m, n, parvect, stationary = TRUE) {
-  pn <- norm_hmm_pw2pn(m, parvect, stationary)
+#np is the length of parvect0, i.e. number of working parameters
+norm_inv_hessian <- function(mod, stationary = TRUE){
+  if (!stationary) {
+    np2 <- mod$np - mod$m + 1
+    h <- mod$hessian[1:np2, 1:np2]
+  }
+  else {
+    np2 <- mod$np
+    h <- mod$hessian
+  }
+  h <- solve(h)
+  jacobian <- norm_jacobian(mod, np2)
+  h <- t(jacobian) %*% h %*% jacobian
+  return(h)
+}
+
+norm_jacobian <- function(mod, n) {
+  m <- mod$m
   jacobian <- matrix(0, nrow = n, ncol = n)
   jacobian[1:m, 1:m] <- diag(m)
-  jacobian[(m + 1):(2 * m), (m + 1):(2 * m)] <- diag(pn$sigma)
+  jacobian[(m + 1):(2 * m), (m + 1):(2 * m)] <- diag(mod$sigma)
   count <- 0
   for (i in 1:m) {
     for (j in 1:m) {
       if (j != i) {
         count <- count + 1
-        foo <- -pn$gamma[i, j] * pn$gamma[i, ]
-        foo[j] <- pn$gamma[i, j] * (1 - pn$gamma[i, j])
+        foo <- -mod$gamma[i, j] * mod$gamma[i, ]
+        foo[j] <- mod$gamma[i, j] * (1 - mod$gamma[i, j])
         foo <- foo[-i]
         jacobian[2 * m + count,
                  (2 * m + (i - 1) * (m - 1) + 1):(2 * m + i * (m - 1))] <- foo
@@ -373,7 +369,7 @@ norm_bootstrap_ci <- function(mod, bootstrap, alpha, m) {
     else {
       foo <- bootstrap2 %>% filter((row_number() %% (m * m)) == i)
     }
-    
+
     gamma_lower[i] <- 2 * mod$gamma[i] -
       quantile(foo$gamma, 1 - (alpha / 2), names = FALSE)
     gamma_upper[i] <- 2 * mod$gamma[i] -
