@@ -9,13 +9,9 @@ library(lemon)
 library(GGally)
 library(RColorBrewer)
 
-setwd("C:/Jessica/UofT Y4/Research/Coding")
-
-source("univariate_normal_hmm_functions.R")
-
 setwd("C:/Jessica/UofT Y4/Research/Coding/Lab Data")
 
-get_custom_data_static <- function(data_file, timestamps_file, filename) {
+get_custom_data <- function(data_file, timestamps_file, filename) {
   data <- read.csv(file = data_file)
   timestamps <- read.csv(file = timestamps_file)
   
@@ -37,18 +33,29 @@ get_custom_data_static <- function(data_file, timestamps_file, filename) {
                                  "Time.End")] <- "Time.Stop"
   }
   
+  # Filter out rows with NA for data values
+  data <- data %>% drop_na()
+  
   # Add Behavior and Prey column to main data set, based on data in timestamps
   data$Time <- chron(times = data$Time)
   timestamps$Time.Start <- chron(times = timestamps$Time.Start)
   timestamps$Time.Stop <- chron(times = timestamps$Time.Stop)
-  data$Behavior <- ifelse(timestamps$Time.Start <= data$Time &
-                            timestamps$Time.Stop >= data$Time,
-                          timestamps$Behavior, NA
-  )
-  data$Prey <- ifelse(timestamps$Time.Start <= data$Time &
-                        timestamps$Time.Stop >= data$Time,
-                      timestamps$Prey, NA
-  )
+  data$Behavior <- NA
+  data$Prey <- NA
+  
+  for(i in 1:nrow(timestamps)) {
+    time_start <- timestamps[i,]$Time.Start
+    time_stop <- timestamps[i,]$Time.Stop
+    data$Behavior <- ifelse(time_start <= data$Time &
+                              time_stop >= data$Time,
+                            timestamps[i,]$Behavior, data$Behavior
+    )
+    data$Prey <- ifelse(time_start <= data$Time &
+                          time_stop >= data$Time,
+                        timestamps[i,]$Prey, data$Prey
+    )
+  }
+  
   # Write to CSV
   write.csv(data, file = filename, row.names = FALSE)
 }
@@ -117,7 +124,7 @@ pacf_plot_static <- function(data, filename) {
 
 behavior_plot_static <- function(data, filename) {
   plotx <- ggplot(data, aes(x = Time, y = X_static, colour = Behavior)) +
-    geom_point(size = 0.5) +
+    geom_line() +
     theme_minimal() +
     theme(
       axis.text.x = element_blank(),
@@ -126,7 +133,7 @@ behavior_plot_static <- function(data, filename) {
     ) +
     scale_color_brewer(palette = "Set1")
   ploty <- ggplot(data, aes(x = Time, y = Y_static, colour = Behavior)) +
-    geom_point(size = 0.5) +
+    geom_line() +
     theme_minimal() +
     theme(
       axis.text.x = element_blank(),
@@ -135,7 +142,7 @@ behavior_plot_static <- function(data, filename) {
     ) +
     scale_color_brewer(palette = "Set1")
   plotz <- ggplot(data, aes(x = Time, y = Z_static, colour = Behavior)) +
-    geom_point(size = 0.5) +
+    geom_line() +
     theme_minimal() +
     theme(
       axis.text.x = element_blank(),
@@ -255,43 +262,108 @@ pairs_plot <- function(data, filename) {
   ggsave(filename, plot)
 }
 
-pseudo_residual_plot <- function(data, filename) {
-  # Index plot of pseudo-residuals
-  plot_index <- ggplot(data) +
-    geom_point(aes(x = index, y = npsr), size = 0.5, colour = "black") +
-    theme_minimal()
-  # Histogram of pseudo-residuals
-  plot_hist <- ggplot(data, aes(npsr)) +
-    geom_histogram(aes(y = ..density..), colour = "navy", fill = "light blue") +
-    stat_function(fun = dnorm, colour = "red") +
-    theme_minimal()
-  # QQ plot of pseudo-residuals
-  plot_qq <- ggplot(data, aes(sample = npsr)) +
-    stat_qq() +
-    stat_qq_line() +
-    theme_minimal()
-  # ACF of pseudo-residuals
-  plot_acf <- ggacf(data$npsr) +
-    theme_minimal()
-  plot <- grid.arrange(plot_index, plot_hist, plot_qq, plot_acf,
-                       nrow = 2, ncol = 2)
-  ggsave(paste(filename, "png", sep = "."), plot)
+behavior_pairs_plot_static <- function(data, filename) {
+  behaviors <- unique(data$Behavior)
+  for (i in seq_len(length(behaviors))) {
+    behavior <- behaviors[i]
+    subdata <- data %>% filter(Behavior == behavior)
+    static_data <- subdata %>% select(X_static, Y_static, Z_static)
+    
+    plot <- ggpairs(static_data,
+                    lower = list(continuous = wrap("smooth", size = 0.1)),
+                    diag = list(continuous = "bar")
+    ) +
+      theme_minimal()
+    
+    ggsave(paste(filename, behavior, "correlation.png", sep = "_"), plot)
+  }
 }
 
-data_file <- "Lady_27Mar17_Static_25Hz.csv"
-timestamps_file <- "TimestampedData_Lady_27Mar17.csv"
-filename <- "Custom_Lady_27Mar17_static.csv"
-get_custom_data(data_file, timestamps_file, filename)
-data <- read.csv(filename)
-labelled_data <- data %>% filter(!is.na(Behavior))
-static_data <- data %>% select(X_static, Y_static, Z_static)
+xy_scatter_plot_static <- function(data, filename){
+  plot1 <- ggplot(data, aes(x = X_static, y = Y_static)) +
+    geom_point(size = 0.2) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      text = element_text(size = 7)
+    ) 
+  
+  plot2 <- ggplot(data, aes(x = X_static, y = Y_static, colour = Behavior)) +
+    geom_point(size = 0.2) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      text = element_text(size = 7)
+    ) +
+    scale_color_brewer(palette = "Set1")
+  
+  ggsave(paste(filename, "X_and_Y_static1.png", sep = "_"), plot1)
+  ggsave(paste(filename, "X_and_Y_static2.png", sep = "_"), plot2)
+}
 
-line_plot_static(data, "Lady_27Mar17_line_plot")
-hist_plot_static(data, "Lady_27Mar17_histogram")
-acf_plot_static(data, "Lady_27Mar17_acf")
-pacf_plot_static(data, "Lady_27Mar17_pacf")
-behavior_plot_static(data, "Lady_27Mar17_plot_behavior")
-behavior_plot_static(labelled_data, "Lady_27Mar17_plot_behavior_filtered")
-filtered_hist_static(labelled_data, "Lady_27Mar17_histogram_filtered")
-behavior_hist_static(labelled_data, "Lady_27Mar17_histogram_behavior")
-pairs_plot(static_data, "Lady_27Mar17_correlation_static.png")
+behavior_xy_scatter_plot_static <- function(data, filename) {
+  # Create new column indicating each subinterval of behavior
+  n <- length(data$Behavior)
+  indicies <- c(1, which(data$Behavior != lag(data$Behavior)), n)
+  m <- length(indicies)
+  foo <- numeric(n)
+  for (i in 1:(m - 1)) {
+    foo[indicies[i]:indicies[i + 1]] <-
+      rep(i, indicies[i + 1] - indicies[i] + 1)
+  }
+  data$BehaviorIndex <- as.character(foo)
+  
+  behaviors <- unique(data$Behavior)
+  for (i in seq_len(length(behaviors))) {
+    behavior <- behaviors[i]
+    subdata <- data %>% filter(Behavior == behavior)
+    
+    plot <- ggplot(subdata, aes(x = X_static, y = Y_static, color = Time)) +
+      geom_point(size = 0.2, show.legend = FALSE) +
+      theme_minimal() +
+      theme(
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        text = element_text(size = 7) 
+      )
+    
+    ggsave(paste(filename, behavior, "xy.png", sep = "_"), plot)
+  }
+}
+
+get_plots_static <- function(names){
+  n <- length(names)
+  for (i in 1:n){
+    name <- names[i]
+    filename <- paste("Custom", name, "static.csv", sep = "_")
+    data <- read.csv(filename)
+    labelled_data <- data %>% filter(!is.na(Behavior))
+    static_data <- data %>% select(X_static, Y_static, Z_static)
+    
+    line_plot_static(data, paste(name, "line_plot", sep = "_"))
+    hist_plot_static(data, paste(name, "histogram", sep = "_"))
+    acf_plot_static(data, paste(name, "acf", sep = "_"))
+    pacf_plot_static(data, paste(name, "pacf", sep = "_"))
+    behavior_plot_static(data, paste(name, "plot_behavior", sep = "_"))
+    behavior_plot_static(labelled_data, paste(name, "plot_behavior_filtered", sep = "_"))
+    filtered_hist_static(labelled_data, paste(name, "histogram_filtered", sep = "_"))
+    behavior_hist_static(labelled_data, paste(name, "histogram_behavior", sep = "_"))
+    pairs_plot(static_data, paste(name, "correlation_static.png", sep = "_"))
+    behavior_pairs_plot_static(data, paste(name, "static", sep = "_"))
+  }
+}
+
+data_file <- "BigGuy_15Feb18_Static25Hz.csv"
+timestamps_file <- "TimestampedData_BigGuy_15Feb18.csv"
+filename <- "Custom_BigGuy_15Feb18_static.csv"
+get_custom_data(data_file, timestamps_file, filename)
+
+names <- c("BigDaddy_3Apr17",
+           "BigDaddy_20Mar17",
+           "BigGuy_15Feb18",
+           "Eliza_7Sept17",
+           "Eliza_20Sept17",
+           "Lady_27Mar17")
+get_plots_static(names)
