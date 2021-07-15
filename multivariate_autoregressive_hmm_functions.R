@@ -5,6 +5,7 @@ library(plyr)
 library(bayesforecast)
 library(gridExtra)
 library(mvtnorm)
+library(parallel)
 library(Rcpp)
 
 sourceCpp("foralg.cpp")
