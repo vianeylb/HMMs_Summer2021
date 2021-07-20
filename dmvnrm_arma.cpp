@@ -26,20 +26,30 @@ arma::vec dmvnrm_arma_mc(arma::mat const &x,
   uword const n = x.n_rows, 
     xdim = x.n_cols;
   arma::vec out(n);
-  arma::mat const rooti = arma::inv(trimatu(arma::chol(sigma)));
-  double const rootisum = arma::sum(log(rooti.diag())), 
-    constants = -(double)xdim/2.0 * log2pi, 
-    other_terms = rootisum + constants;
-  
-  arma::rowvec z;
-#pragma omp parallel for schedule(static) private(z)
-  for (uword i = 0; i < n; i++) {
-    z = (x.row(i) - mean);
-    inplace_tri_mat_mult(z, rooti);   
-    out(i) = other_terms - 0.5 * arma::dot(z, z);     
-  }  
-  
-  if (logd)
+  arma::mat R;
+  bool success;
+  success = arma::chol(R, sigma);
+  if (success == false)
+  {
     return out;
-  return exp(out);
+  }
+  else{
+    arma::mat const rooti = arma::inv(trimatu(R));
+    double const rootisum = arma::sum(log(rooti.diag())), 
+      constants = -(double)xdim/2.0 * log2pi, 
+      other_terms = rootisum + constants;
+    
+    arma::rowvec z;
+#pragma omp parallel for schedule(static) private(z)
+    for (uword i = 0; i < n; i++) {
+      z = (x.row(i) - mean);
+      inplace_tri_mat_mult(z, rooti);   
+      out(i) = other_terms - 0.5 * arma::dot(z, z);     
+    }  
+    
+    if (logd)
+      return out;
+    return exp(out);
+  }
+  
 }
