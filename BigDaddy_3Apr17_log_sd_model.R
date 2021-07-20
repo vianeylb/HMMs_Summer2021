@@ -13,7 +13,7 @@ setwd("C:/Jessica/UofT Y4/Research/Coding")
 source("univariate_autoregressive_hmm_functions.R")
 source("multivariate_autoregressive_hmm_functions.R")
 sourceCpp("foralg.cpp")
-sourceCpp("dmvnrm_arma.cpp")
+sourceCpp("dmvnrm_arma_v2.cpp")
 
 setwd("C:/Jessica/UofT Y4/Research/Coding/Lab Data")
 
@@ -96,7 +96,7 @@ delta4 <- c(1/4, 1/4, 1/4, 1/4)
 start_time <- Sys.time()
 log_sd_dynamic_mle4 <- mar_hmm_mle(obs, m = 4, q = 1, k = 3,
                                  mu4, sigma4, gamma4, phi4, delta4,
-                                 stationary = FALSE, hessian = TRUE
+                                 stationary = FALSE, hessian = FALSE
 )
 end_time <- Sys.time()
 runningtime2 <- end_time - start_time

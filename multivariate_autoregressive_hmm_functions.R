@@ -9,7 +9,9 @@ library(parallel)
 library(Rcpp)
 
 sourceCpp("foralg.cpp")
-sourceCpp("dmvnrm_arma.cpp")
+#sourceCpp("dmvnrm_arma.cpp")
+sourceCpp("dmvnrm_arma_v2.cpp")
+
 
 # q: order of autoregressive model
 # phi: autoregressive model parameters, as list of qxq matrices
@@ -165,14 +167,14 @@ mar_hmm_mllk <- function(parvect, x, m, q, k, stationary = TRUE) {
 # Returns n * m matrix of state dependent probability densities
 mar_densities <- function(x, mod, m, q, k, n) {
   p <- matrix(nrow = n, ncol = m)
-  cores <- detectCores()
+  #cores <- detectCores()
   means <- get_all_mar_means(x, mod, m, q, k)
   for (i in 1:n) {
     for (j in 1:m) {
       p[i, j] <- dmvnrm_arma_mc(matrix(x[, i], ncol = k),
                                 means[[j]][i, ],
-                                mod$sigma[[j]],
-                                cores = cores)
+                                mod$sigma[[j]])#,
+                                #cores = cores)
     }
   }
   return(p)
@@ -186,7 +188,7 @@ mar_hmm_mle <- function(x, m, q, k, mu0, sigma0, gamma0, phi0, delta0 = NULL,
   )
   mod <- nlm(mar_hmm_mllk, parvect0,
     x = x, m = m, q = q, k = k,
-    stationary = stationary, hessian = hessian, steptol = 0.00001
+    stationary = stationary, hessian = hessian, stepmax=10, print.level = 2
   )
   pn <- mar_hmm_pw2pn(
     m = m, q = q, k = k, parvect = mod$estimate,
