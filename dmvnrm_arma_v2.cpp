@@ -11,6 +11,16 @@ arma::vec dmvnrm_arma(arma::mat const &x,
   uword const n = x.n_rows, 
     xdim = x.n_cols;
   arma::vec out(n);
+  // inserting an if statement to address issues with cholesky decomposition
+  arma::mat R;
+  bool success;
+  success = arma::chol(R, sigma);
+  if (success == false)
+  {
+    return out;
+  }
+  else{
+    
   arma::mat const rooti = arma::inv(trimatu(arma::chol(sigma)));
   double const rootisum = arma::sum(log(rooti.diag())), 
     constants = -(double)xdim/2.0 * log2pi, 
@@ -25,4 +35,5 @@ arma::vec dmvnrm_arma(arma::mat const &x,
   if (logd)
     return out;
   return exp(out);
+  }
 }
