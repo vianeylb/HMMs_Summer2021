@@ -147,8 +147,7 @@ inmvnorm_hmm_generate_sample <- function(ns, mod) {
 }
 
 inmvnorm_hmm_sample_one <- function(state, mod) {
-  sigma <- diag(mod$sigma[[state]])
-  x <- rmvnorm(1, mean = mod$mu[[state]], sigma = sigma)
+  x <- rmvnorm(1, mean = mod$mu[[state]], sigma = diag(mod$sigma[[state]]^2))
   return(x)
 }
 
@@ -259,7 +258,7 @@ inmvnorm_dist_mat <- function(x, mod, n) {
     for (j in 1:m) {
       p[i, j] <- pmvnorm(
         lower = rep(-Inf, mod$k), upper = x[, i],
-        mean = mod$mu[[j]], sigma = diag(mod$sigma[[j]])
+        mean = mod$mu[[j]], sigma = diag(mod$sigma[[j]]^2)
       )
     }
   }
