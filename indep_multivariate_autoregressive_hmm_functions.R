@@ -24,15 +24,15 @@ get_inmar_mean <- function(mu, phi, x, m, q, k, i) {
   else {
     mean <- list()
     if (i <= q) {
-      x_lag <- as.vector(x[, (i - 1):1])
+      x_lag <- x[, (i - 1):1]
       for (j in 1:m) {
-        mean[[j]] <- mu[[j]] + phi[[j]][, 1:((i - 1) * k)] %*% x_lag
+        mean[[j]] <- mu[[j]] + diag(phi[[j]][, 1:(i - 1)] %*% t(x_lag))
       }
     }
     else {
-      x_lag <- as.vector(x[, (i - 1):(i - q)])
+      x_lag <- x[, (i - 1):(i - q)]
       for (j in 1:m) {
-        mean[[j]] <- mu[[j]] + phi[[j]] %*% x_lag
+        mean[[j]] <- mu[[j]] + diag(phi[[j]] %*% t(x_lag))
       }
     }
   }
@@ -41,17 +41,21 @@ get_inmar_mean <- function(mu, phi, x, m, q, k, i) {
 
 get_all_inmar_means <- function(x, mod, m, q, k) {
   n <- ncol(x)
-  x_lags <- matrix(0, nrow = n, ncol = k * q)
-  for (i in 1:q){
-    x_lags[-c(1:i), ((i - 1) * k  + 1):(k * i)] <- t(x[, -c((n - i + 1):n)])
-  }
-  
   means <- list()
   for(i in 1:m){
     mu_matrix <- matrix(mod$mu[[i]], nrow = n, ncol = k, byrow = TRUE)
-    means[[i]] <- mu_matrix + x_lags %*% t(mod$phi[[i]])
+    for (j in 1:k){
+      x_lags <- matrix(nrow = n, ncol = q)
+      for (h in 1:q){
+        x_lag <- lag(x[j, ], h)
+        x_lag[1:h] <- rep(0, h)
+        x_lags[, h] <- x_lag
+      }
+      phi <- mod$phi[[i]][j, ]
+      mu_matrix[, j] <- mu_matrix[, j] + x_lags %*% phi
+    }
+    means[[i]] <- mu_matrix
   }
-  
   return(means)
 }
 
@@ -67,7 +71,7 @@ inmar_hmm_generate_sample <- function(ns, mod) {
   x <- matrix(nrow = mod$k, ncol = ns)
   for (i in 1:ns) {
     mean <- get_inmar_mean(mod$mu, mod$phi, x, mod$m, mod$q, mod$k, i)
-    x[, i] <- rmvnorm(1, mean = mean[[state[i]]], sigma = diag(mod$sigma[[state[i]]]))
+    x[, i] <- rmvnorm(1, mean = mean[[state[i]]], sigma = diag(mod$sigma[[state[i]]])^2)
   }
   return(list(index = c(1:ns), state = state, obs = x))
 }
@@ -109,11 +113,11 @@ inmar_hmm_pw2pn <- function(m, q, k, parvect, stationary = TRUE) {
   gamma[!gamma] <- exp(tgamma)
   gamma <- gamma / apply(gamma, 1, sum)
   
-  tphi <- parvect[(count:(count + k * k * q * m))]
-  count <- count + k * k * q * m
+  tphi <- parvect[(count:(count + k * q * m))]
+  count <- count + k * q * m
   phi <- list()
   for (i in 1:m) {
-    foo <- tphi[((i - 1) * k * k * q + 1):(i * k * k * q)]
+    foo <- tphi[((i - 1) * k * q + 1):(i * k * q)]
     phi[[i]] <- matrix(foo, nrow = k)
   }
   
@@ -154,13 +158,16 @@ inmar_densities <- function(x, mod, m, q, k, n) {
 
 # Computing MLE from natural parameters
 inmar_hmm_mle <- function(x, m, q, k, mu0, sigma0, gamma0, phi0, delta0 = NULL,
-                        stationary = TRUE, hessian = FALSE) {
+                        stationary = TRUE, hessian = FALSE,
+                        steptol = 1e-6, iterlim = 100,
+                        stepmax = 100) {
   parvect0 <- inmar_hmm_pn2pw(m, mu0, sigma0, gamma0, phi0, delta0,
                             stationary = stationary
   )
   mod <- nlm(inmar_hmm_mllk, parvect0,
              x = x, m = m, q = q, k = k,
-             stationary = stationary, hessian = hessian
+             stationary = stationary, hessian = hessian, 
+             steptol = steptol, stepmax = stepmax, iterlim = iterlim
   )
   pn <- inmar_hmm_pw2pn(
     m = m, q = q, k = k, parvect = mod$estimate,
@@ -294,7 +301,7 @@ inmar_dist_mat <- function(x, mod, n) {
     for (j in 1:mod$m) {
       p[i, j] <- pmvnorm(
         lower = rep(-Inf, mod$k), upper = x[, i],
-        mean = means[[j]][i, ], sigma = diag(mod$sigma[[j]])
+        mean = means[[j]][i, ], sigma = diag(mod$sigma[[j]]^2)
       )
     }
   }
@@ -368,7 +375,7 @@ inmar_bootstrap_estimates <- function(mod, n, len, stationary) {
     sigma_estimate[((i - 1) * m * k + 1):(i * m * k)] <-
       unlist(mod2$sigma, use.names = FALSE)
     gamma_estimate[((i - 1) * m * m + 1):(i * m * m)] <- mod2$gamma
-    phi_estimate[((i - 1) * m * k * k * q + 1):(i * m * k * k * q)] <-
+    phi_estimate[((i - 1) * m * k * q + 1):(i * m * k * q)] <-
       unlist(mod2$phi, use.names = FALSE)
     delta_estimate[((i - 1) * m + 1):(i * m)] <- mod2$delta
   }
@@ -446,18 +453,18 @@ inmar_bootstrap_ci <- function(mod, bootstrap, alpha) {
       quantile(foo$gamma, alpha / 2, names = FALSE)
   }
   
-  phi_lower <- matrix(NA, nrow = m * k, ncol = k * q)
-  phi_upper <- matrix(NA, nrow = m * k, ncol = k * q)
+  phi_lower <- matrix(NA, nrow = m * k, ncol = q)
+  phi_upper <- matrix(NA, nrow = m * k, ncol = q)
   bootstrap_phi <- data_frame(phi = bootstrap$phi)
   phi <- unlist(mod$phi, use.names = FALSE)
-  for (i in 1:(m * k * k * q)) {
-    if (i == (m * k * k * q)) {
+  for (i in 1:(m * k * q)) {
+    if (i == (m * k * q)) {
       foo <- bootstrap_phi %>%
-        filter((row_number() %% (m * k * k * q)) == 0)
+        filter((row_number() %% (m * k * q)) == 0)
     }
     else {
       foo <- bootstrap_phi %>%
-        filter((row_number() %% (m * k * k * q)) == i)
+        filter((row_number() %% (m * k * q)) == i)
     }
     phi_lower[i] <- 2 * phi[i] -
       quantile(foo$phi, 1 - (alpha / 2), names = FALSE)
