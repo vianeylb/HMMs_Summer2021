@@ -123,7 +123,7 @@ ar_hmm_mllk <- function(parvect, x, m, q, stationary = TRUE) {
   n <- length(x)
   pn <- ar_hmm_pw2pn(m, q, parvect, stationary = stationary)
   p <- ar_densities(x, pn, m, q, n)
-  foo <- matrix(pn$delta, ncol=3)
+  foo <- matrix(pn$delta, ncol = m)
   lscale <- foralg(n, m, foo, pn$gamma, p)
   mllk <- -lscale
   return(mllk)
@@ -141,14 +141,16 @@ ar_densities <- function(x, mod, m, q, n) {
 
 ar_hmm_mle <- function(x, m, q, mu0, sigma0, gamma0, phi0,
                        delta0 = NULL, stationary = TRUE,
-                       hessian = FALSE, ...) {
+                       hessian = FALSE, steptol = 1e-6, iterlim = 100,
+                       stepmax = max(1000 * sqrt(sum((p/typsize)^2)), 1000)) {
   parvect0 <- ar_hmm_pn2pw(m, mu0, sigma0, gamma0, phi0, delta0,
     stationary = stationary
   )
   mod <- nlm(ar_hmm_mllk, parvect0,
     x = x, m = m, q = q,
     stationary = stationary,
-    hessian = hessian
+    hessian = hessian,
+    steptol = steptol, stepmax = stepmax, iterlim = iterlim
   )
   pn <- ar_hmm_pw2pn(m, q, mod$estimate,
     stationary = stationary
@@ -310,7 +312,7 @@ ar_inv_hessian <- function(mod, stationary = TRUE){
   return(h)
 }
 
-ar_jacobian <- function(mod, np2) {
+ar_jacobian <- function(mod, n) {
   m <- mod$m
   q <- mod$q
   jacobian <- matrix(0, nrow = n, ncol = n)
