@@ -23,6 +23,7 @@ get_behavior_states <- function(data, labels){
   data$State[data$Behavior == "Swimming"] <- labels[4]
   data$State[data$Behavior == "Tag Roll"] <- labels[5]
   data$State[data$Behavior == "Unconfirmed tag roll"] <- labels[5]
+  data$State[is.na(data$Behavior)] <- 0
   return(data)
 }
 
@@ -49,6 +50,9 @@ filename_dynamic <- "Mean_BigDaddy_3Apr17_dynamic.csv"
 data_dynamic <- read.csv(filename_dynamic)
 filename_static <- "Mean_BigDaddy_3Apr17_static.csv"
 data_static <- read.csv(filename_static)
+
+labels <- c(1, 2, 3, 4, 5)
+data <- get_behavior_states(data_dynamic, labels)
 
 n <- length(data_dynamic$X_dynamic)
 obs <- matrix(NA, 4, n)
@@ -81,7 +85,8 @@ start_time <- Sys.time()
 mean4_mle4 <- inmar_hmm_mle(obs, m = 4, q = 1, k = 4,
                             mu4, sigma4, gamma4, phi4, delta4,
                             stationary = FALSE, hessian = TRUE,
-                            steptol = 0.001, iterlim = 400, stepmax = 20
+                            steptol = 0.001, iterlim = 400, stepmax = 20,
+                            state = data$State
 )
 end_time <- Sys.time()
 end_time - start_time
@@ -92,8 +97,6 @@ load("BigDaddy_3Apr17_indep_mean4_mle4.RData")
 
 mean4_decoding4 <- inmar_hmm_viterbi(obs, mean4_mle4)
 count(mean4_decoding4$state)
-labels <- c(1, 2, 3, 4, 5)
-data <- get_behavior_states(data, labels)
 count(data$State)
 count(mean4_decoding4$state - data$State)
 con_mat <- get_confusion_matrix(data, mean4_decoding4) 
@@ -104,6 +107,9 @@ filename_dynamic <- "Mean_BigDaddy_3Apr17_dynamic.csv"
 data_dynamic <- read.csv(filename_dynamic)
 filename_static <- "Mean_BigDaddy_3Apr17_static.csv"
 data_static <- read.csv(filename_static)
+
+labels <- c(1, 2, 3, 4, 5)
+data <- get_behavior_states(data_dynamic, labels)
 
 n <- length(data_dynamic$X_dynamic)
 obs <- matrix(NA, 6, n)
@@ -137,7 +143,9 @@ delta4 <- c(1/4, 1/4, 1/4, 1/4)
 start_time <- Sys.time()
 mean_mle4 <- inmar_hmm_mle(obs, m = 4, q = 1, k = 6,
                            mu4, sigma4, gamma4, phi4, delta4,
-                           stationary = FALSE, hessian = TRUE
+                           stationary = FALSE, hessian = TRUE,
+                           steptol = 0.001, iterlim = 400, stepmax = 20,
+                           state = data$State
 )
 end_time <- Sys.time()
 end_time - start_time
@@ -145,7 +153,6 @@ end_time - start_time
 mean_mle4
 save(mean_mle4, file = "BigDaddy_3Apr17_indep_mean_mle4.RData")
 load("BigDaddy_3Apr17_indep_mean_mle4.RData")
-
 
 mean_decoding4 <- inmar_hmm_viterbi(obs, mean_mle4)
 count(mean_decoding4$state)
