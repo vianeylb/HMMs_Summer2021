@@ -119,10 +119,17 @@ ar_hmm_pw2pn <- function(m, q, parvect, stationary = TRUE) {
   return(list(mu = mu, sigma = sigma, gamma = gamma, phi = phi, delta = delta))
 }
 
-ar_hmm_mllk <- function(parvect, x, m, q, stationary = TRUE) {
+ar_hmm_mllk <- function(parvect, x, m, q, stationary = TRUE, state = NULL) {
   n <- length(x)
   pn <- ar_hmm_pw2pn(m, q, parvect, stationary = stationary)
-  p <- ar_densities(x, pn, m, q, n)
+  
+  if (is.null(state)){
+    p <- ar_densities(x, pn, m, q, n)
+  }
+  else {
+    p <- ar_densities_labelled(x, pn, m, q, n, state)
+  }
+  
   foo <- matrix(pn$delta, ncol = m)
   lscale <- foralg(n, m, foo, pn$gamma, p)
   mllk <- -lscale
@@ -139,17 +146,34 @@ ar_densities <- function(x, mod, m, q, n) {
   return(p)
 }
 
+#States is a length n vector of states 
+ar_densities_labelled <- function(x, mod, m, q, n, state) {
+  p <- matrix(0, nrow = n, ncol = m)
+  means <- get_all_ar_means(mod$mu, mod$phi, m, q, x)
+  for (i in 1:n) {
+    if (state[i] == 0){
+      p[i, ] <- dnorm(x[i], means[i, ], mod$sigma)
+    }
+    else{
+      j <- state[i]
+      p[i, j] <- dnorm(x[i], means[i, j], mod$sigma[j])
+    }
+  }
+  return(p)
+}
+
 ar_hmm_mle <- function(x, m, q, mu0, sigma0, gamma0, phi0,
                        delta0 = NULL, stationary = TRUE,
                        hessian = FALSE, steptol = 1e-6, iterlim = 100,
-                       stepmax = max(1000 * sqrt(sum((p/typsize)^2)), 1000)) {
+                       stepmax = 100,
+                       state = NULL) {
   parvect0 <- ar_hmm_pn2pw(m, mu0, sigma0, gamma0, phi0, delta0,
     stationary = stationary
   )
   mod <- nlm(ar_hmm_mllk, parvect0,
     x = x, m = m, q = q,
     stationary = stationary,
-    hessian = hessian,
+    hessian = hessian, state = state,
     steptol = steptol, stepmax = stepmax, iterlim = iterlim
   )
   pn <- ar_hmm_pw2pn(m, q, mod$estimate,
