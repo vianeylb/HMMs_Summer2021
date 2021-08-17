@@ -10,6 +10,8 @@ library(Rcpp)
 
 sourceCpp("foralg.cpp")
 sourceCpp("dmvnrm_arma.cpp")
+#sourceCpp("dmvnrm_arma_v2.cpp")
+
 
 # q: order of autoregressive model
 # phi: autoregressive model parameters, as list of qxq matrices
@@ -52,7 +54,8 @@ get_all_inmar_means <- function(x, mod, m, q, k) {
         x_lags[, h] <- x_lag
       }
       phi <- mod$phi[[i]][j, ]
-      mu_matrix[, j] <- mu_matrix[, j] + x_lags %*% phi
+      #mu_matrix[, j] <- mu_matrix[, j] + x_lags%*% phi
+      mu_matrix[, j] <- mu_matrix[, j] + (x_lags - mu_matrix[,j])%*% phi
     }
     means[[i]] <- mu_matrix
   }
@@ -138,8 +141,7 @@ inmar_hmm_mllk <- function(parvect, x, m, q, k, stationary = TRUE, state = NULL)
   
   if (is.null(state)){
     p <- inmar_densities(x, pn, m, q, k, n)
-  }
-  else {
+  } else {
     p <- inmar_densities_labelled(x, pn, m, q, k, n, state)
   }
   
@@ -168,14 +170,21 @@ inmar_densities_labelled <- function(x, mod, m, q, k, n, state) {
   means <- get_all_inmar_means(x, mod, m, q, k)
   for (i in 1:n) {
     for (j in 1:m) {
-      if (j == state[i]){
+      ## check if state is known
+      if(state[i] == 0){
         for (l in 1:k){
           p[i, j] <- p[i, j] * dnorm(x[l, i], means[[j]][i, l], mod$sigma[[j]][l])
         }
+      } else {
+          if (j == state[i]){
+            for (l in 1:k){
+              p[i, j] <- p[i, j] * dnorm(x[l, i], means[[j]][i, l], mod$sigma[[j]][l])
+            }
+          } else{
+            p[i, j] <- 0
+          }
       }
-      else{
-        p[i, j] <- 0
-      }
+      
     }
   }
   return(p)
@@ -192,7 +201,8 @@ inmar_hmm_mle <- function(x, m, q, k, mu0, sigma0, gamma0, phi0, delta0 = NULL,
   mod <- nlm(inmar_hmm_mllk, parvect0,
              x = x, m = m, q = q, k = k,
              stationary = stationary, hessian = hessian, state = state, 
-             steptol = steptol, stepmax = stepmax, iterlim = iterlim
+             steptol = steptol, stepmax = stepmax, iterlim = iterlim, 
+             print.level = 2
   )
   pn <- inmar_hmm_pw2pn(
     m = m, q = q, k = k, parvect = mod$estimate,
